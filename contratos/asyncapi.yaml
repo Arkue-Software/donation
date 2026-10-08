@@ -1,0 +1,245 @@
+asyncapi: 3.0.0
+info:
+  title: RedVital — Eventos del Servicio de Donación
+  version: 1.0.0
+  description: |
+    Contratos de los eventos que publica el Servicio de Donación y del que
+    consume (DD V3.0, Tabla 27; Herramientas V4.0, entrada 93).
+
+    Política de contenido (RT-16): ningún evento transporta datos personales
+    ni información clínica. Solo identificadores; nunca nombre, documento,
+    correo, teléfono ni resultado de tamizaje.
+
+    Publicación: bandeja de salida transaccional (ADR-018), productor
+    idempotente con acks=all. Todo consumidor debe ser idempotente: un evento
+    puede llegar más de una vez y se reconoce por la cabecera evento-id.
+defaultContentType: application/json
+
+servers:
+  kafka:
+    host: kafka:9092
+    protocol: kafka
+    description: Broker único en KRaft (Apache Kafka 4.3). Autenticación SASL/SCRAM-SHA-512 por servicio.
+    security:
+      - $ref: '#/components/securitySchemes/scram'
+
+channels:
+  donacionCompletada:
+    address: redvital.donacion.donation-completed.v1
+    title: EV-01 — Donación registrada
+    description: Productor Donación; consumidor Campañas (grupo campanias), que cuenta las donaciones de cada campaña (RF-25).
+    messages:
+      donacionCompletada:
+        $ref: '#/components/messages/DonacionCompletada'
+    bindings:
+      kafka:
+        partitions: 3
+        replicas: 1
+        topicConfiguration:
+          cleanup.policy: [delete]
+          retention.ms: 604800000
+        bindingVersion: 0.5.0
+  avisoSolicitado:
+    address: redvital.donacion.notice-requested.v1
+    title: EV-02 — Aviso solicitado
+    description: Productor Donación; consumidor el trabajador de Notificaciones (grupo notificaciones).
+    messages:
+      avisoSolicitado:
+        $ref: '#/components/messages/AvisoSolicitado'
+    bindings:
+      kafka:
+        partitions: 3
+        replicas: 1
+        topicConfiguration:
+          cleanup.policy: [delete]
+          retention.ms: 604800000
+        bindingVersion: 0.5.0
+  campaniaPublicada:
+    address: redvital.campanias.campaign-published.v1
+    title: EV-03 — Campaña publicada (consumido)
+    description: |
+      Productor Campañas; contrato en el repositorio de Campañas. Donación lo
+      consume (grupo donacion) para mantener la proyección local de campañas
+      con la que confirma la campaña de una donación, sin llamar a Campañas.
+    messages:
+      campaniaPublicada:
+        $ref: '#/components/messages/CampaniaPublicada'
+
+operations:
+  publicarDonacionCompletada:
+    action: send
+    channel:
+      $ref: '#/channels/donacionCompletada'
+    messages:
+      - $ref: '#/channels/donacionCompletada/messages/donacionCompletada'
+  publicarAvisoSolicitado:
+    action: send
+    channel:
+      $ref: '#/channels/avisoSolicitado'
+    messages:
+      - $ref: '#/channels/avisoSolicitado/messages/avisoSolicitado'
+  consumirCampaniaPublicada:
+    action: receive
+    channel:
+      $ref: '#/channels/campaniaPublicada'
+    messages:
+      - $ref: '#/channels/campaniaPublicada/messages/campaniaPublicada'
+    bindings:
+      kafka:
+        groupId:
+          type: string
+          enum: [donacion]
+        bindingVersion: 0.5.0
+
+components:
+  securitySchemes:
+    scram:
+      type: scramSha512
+      description: Un usuario SCRAM por servicio, con ACL de la Tabla 30 del DD.
+
+  messages:
+    DonacionCompletada:
+      name: donation.completed
+      title: Donación registrada
+      summary: Un operador registró una donación en una institución.
+      headers:
+        $ref: '#/components/schemas/Cabeceras'
+      payload:
+        $ref: '#/components/schemas/DonacionCompletadaV1'
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: donacion_id
+          bindingVersion: 0.5.0
+    AvisoSolicitado:
+      name: notice.requested
+      title: Aviso solicitado
+      summary: Donación pide avisar a un donante; Notificaciones resuelve el contacto por su canal.
+      headers:
+        $ref: '#/components/schemas/Cabeceras'
+      payload:
+        $ref: '#/components/schemas/AvisoSolicitadoV1'
+      bindings:
+        kafka:
+          key:
+            type: string
+            format: uuid
+            description: destinatario_id
+          bindingVersion: 0.5.0
+    CampaniaPublicada:
+      name: campaign.published
+      title: Campaña publicada
+      headers:
+        $ref: '#/components/schemas/Cabeceras'
+      payload:
+        $ref: '#/components/schemas/CampaniaPublicadaV1'
+
+  schemas:
+    Cabeceras:
+      type: object
+      required: [evento-id, evento-tipo, evento-version, correlacion-id, ocurrido-en, productor]
+      properties:
+        evento-id:
+          type: string
+          format: uuid
+          description: Identificador único del evento; clave de deduplicación del consumidor.
+        evento-tipo:
+          type: string
+        evento-version:
+          type: string
+          description: Versión mayor del contrato.
+        correlacion-id:
+          type: string
+          maxLength: 36
+          description: Correlación de la petición o del ciclo que produjo el hecho (EC-20).
+        ocurrido-en:
+          type: string
+          format: date-time
+        productor:
+          type: string
+
+    DonacionCompletadaV1:
+      type: object
+      additionalProperties: false
+      required: [donacion_id, institucion_id, campania_id, tipo_donacion, fecha_captacion, unidades_generadas]
+      properties:
+        donacion_id:
+          type: string
+          format: uuid
+        institucion_id:
+          type: string
+          format: uuid
+          description: Institución donde se captó.
+        campania_id:
+          type: [string, 'null']
+          format: uuid
+          description: Nulo si la donación no se hizo en campaña o si la campaña no pudo confirmarse.
+        tipo_donacion:
+          type: string
+          enum: [sangre_total]
+        fecha_captacion:
+          type: string
+          format: date-time
+        unidades_generadas:
+          type: integer
+          minimum: 1
+          maximum: 3
+
+    AvisoSolicitadoV1:
+      type: object
+      additionalProperties: false
+      required: [aviso_id, tipo_aviso, destinatario_tipo, destinatario_id, campania_id, generado_en]
+      properties:
+        aviso_id:
+          type: string
+          format: uuid
+        tipo_aviso:
+          type: string
+          enum: [campania_publicada]
+        destinatario_tipo:
+          type: string
+          enum: [donante]
+        destinatario_id:
+          type: string
+          format: uuid
+        campania_id:
+          type: [string, 'null']
+          format: uuid
+        generado_en:
+          type: string
+          format: date-time
+
+    CampaniaPublicadaV1:
+      type: object
+      description: Forma definida por Campañas. Donación tolera campos nuevos.
+      required: [campania_id, institucion_id, nombre, sede, territorio_codigo, territorio_ruta, inicia_en, termina_en, publicada_en]
+      properties:
+        campania_id:
+          type: string
+          format: uuid
+        institucion_id:
+          type: string
+          format: uuid
+        nombre:
+          type: string
+          maxLength: 160
+        sede:
+          type: string
+          maxLength: 200
+        territorio_codigo:
+          type: string
+          pattern: '^[0-9]{5}$'
+        territorio_ruta:
+          type: string
+          pattern: '^/00(/[0-9]{2}(/[0-9]{5})?)?$'
+        inicia_en:
+          type: string
+          format: date-time
+        termina_en:
+          type: string
+          format: date-time
+        publicada_en:
+          type: string
+          format: date-time
