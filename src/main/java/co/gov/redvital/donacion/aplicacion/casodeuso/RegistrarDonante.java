@@ -3,6 +3,9 @@ package co.gov.redvital.donacion.aplicacion.casodeuso;
 import co.gov.redvital.donacion.aplicacion.comun.Auditor;
 import co.gov.redvital.donacion.aplicacion.comun.ContextoPeticion;
 import co.gov.redvital.donacion.aplicacion.comun.EjecutorIdempotente;
+import co.gov.redvital.donacion.aplicacion.eventos.AvisoSolicitadoV1;
+import co.gov.redvital.donacion.aplicacion.eventos.Temas;
+import co.gov.redvital.donacion.aplicacion.puerto.salida.BandejaSalidaPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.CuentasIdentidadPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.HuellaPeticion;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.IdempotenciaPort;
@@ -24,6 +27,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -37,6 +41,10 @@ import java.util.regex.Pattern;
  * con la misma clave obtiene la misma cuenta y completa el registro. No hay
  * compensación posible porque nada se borra (IN-18); una cuenta huérfana no
  * ve nada, porque toda operación del donante pasa por su perfil.
+ *
+ * En la misma transacción del perfil deja en la bandeja el aviso
+ * {@code cuenta_creada} (EV-02): el trabajador de Notificaciones le envía al
+ * donante el correo de confirmación. El registro nunca espera al correo.
  */
 public final class RegistrarDonante {
 
@@ -67,12 +75,15 @@ public final class RegistrarDonante {
     private final HuellaPeticion huellas;
     private final UnidadDeTrabajo unidadDeTrabajo;
     private final Auditor auditor;
+    private final BandejaSalidaPort bandeja;
+    private final boolean avisosHabilitados;
     private final Clock reloj;
 
     public RegistrarDonante(RepositorioDonantes donantes, RepositorioConsentimientos consentimientos,
                             CuentasIdentidadPort cuentas, ResumidorDocumento resumidor,
                             IdempotenciaPort idempotencia, HuellaPeticion huellas,
-                            UnidadDeTrabajo unidadDeTrabajo, Auditor auditor, Clock reloj) {
+                            UnidadDeTrabajo unidadDeTrabajo, Auditor auditor, BandejaSalidaPort bandeja,
+                            boolean avisosHabilitados, Clock reloj) {
         this.donantes = donantes;
         this.consentimientos = consentimientos;
         this.cuentas = cuentas;
@@ -81,6 +92,8 @@ public final class RegistrarDonante {
         this.huellas = huellas;
         this.unidadDeTrabajo = unidadDeTrabajo;
         this.auditor = auditor;
+        this.bandeja = bandeja;
+        this.avisosHabilitados = avisosHabilitados;
         this.reloj = reloj;
     }
 
@@ -121,6 +134,14 @@ public final class RegistrarDonante {
             consentimientos.insertar(donanteId, Finalidad.TRATAMIENTO_DATOS, true, c.versionAviso(), ahora);
             consentimientos.insertar(donanteId, Finalidad.AVISOS_CAMPANAS, c.autorizaAvisos(), c.versionAviso(), ahora);
             auditor.permitidoAnonimo(OPERACION, "donante", donanteId, ctx);
+            if (avisosHabilitados) {
+                var aviso = new AvisoSolicitadoV1(UUID.randomUUID(), AvisoSolicitadoV1.AVISO_CUENTA_CREADA, "donante",
+                        donanteId, null, Map.of(), ahora);
+                bandeja.encolar(new BandejaSalidaPort.EventoSalida(aviso.avisoId(), AvisoSolicitadoV1.TIPO,
+                        AvisoSolicitadoV1.VERSION, Temas.AVISO_SOLICITADO, donanteId.toString(), aviso,
+                        AvisoSolicitadoV1.AVISO_CUENTA_CREADA + ":" + donanteId + ":" + donanteId,
+                        ctx.correlacionId()), ahora);
+            }
             return new EjecutorIdempotente.Resultado<>(new Resultado(donanteId, usuarioId), false);
         });
     }

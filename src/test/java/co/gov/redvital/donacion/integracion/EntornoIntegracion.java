@@ -29,7 +29,8 @@ import org.testcontainers.utility.MountableFile;
  * Infraestructura real para las pruebas de integración, levantada una sola
  * vez por ejecución: PostgreSQL 16 con los roles y las migraciones del
  * repositorio de bases (las mismas que aplica el despliegue) y Kafka 4.3.1 con
- * los temas creados de antemano, como lo hace el trabajo de inicialización.
+ * los temas creados de antemano —incluidos los de reintento y de mensajes
+ * muertos—, como lo hace el trabajo de inicialización.
  *
  * El servicio se conecta como donacion_servicio, de modo que las pruebas
  * verifican también los permisos por columna del esquema.
@@ -42,7 +43,9 @@ final class EntornoIntegracion {
     static final String AUDIENCIA = "redvital";
 
     static final PostgreSQLContainer POSTGRES = new PostgreSQLContainer("postgres:16").withDatabaseName("db_donacion");
-    static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.1");
+    // Como el broker real: un tema que no está en el catálogo no existe.
+    static final KafkaContainer KAFKA = new KafkaContainer("apache/kafka:4.3.1")
+            .withEnv("KAFKA_AUTO_CREATE_TOPICS_ENABLE", "false");
     static final KeyPair LLAVES = generarLlaves();
 
     static {
@@ -120,6 +123,9 @@ final class EntornoIntegracion {
                     new NewTopic("redvital.donacion.donation-completed.v1", 3, (short) 1),
                     new NewTopic("redvital.donacion.notice-requested.v1", 3, (short) 1),
                     new NewTopic("redvital.campanias.campaign-published.v1", 3, (short) 1),
+                    new NewTopic("redvital.campanias.campaign-published.v1.donacion.retry-0", 3, (short) 1),
+                    new NewTopic("redvital.campanias.campaign-published.v1.donacion.retry-1", 3, (short) 1),
+                    new NewTopic("redvital.campanias.campaign-published.v1.donacion.retry-2", 3, (short) 1),
                     new NewTopic("redvital.campanias.campaign-published.v1.donacion.dlt", 1, (short) 1)))
                     .all().get();
         } catch (Exception e) {

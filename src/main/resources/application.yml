@@ -49,6 +49,9 @@ spring:
     listener:
       missing-topics-fatal: false
       ack-mode: record
+      # Si el broker rechaza la credencial (el usuario SCRAM aún no existe, o se
+      # recreó), el consumidor reintenta en lugar de detenerse para siempre.
+      auth-exception-retry-interval: 10s
     admin:
       auto-create: false
       fail-fast: false
@@ -90,6 +93,11 @@ redvital:
     habilitados: ${AVISOS_HABILITADOS:true}
   procesos:
     habilitados: ${PROCESOS_HABILITADOS:true}
+  kafka:
+    # Primera espera de los temas de reintento, en milisegundos; luego ×5 (2 s, 10 s, 50 s).
+    espera-reintento: 2000
+    # Cada cuánto se reintenta en el sitio un evento mientras la base no responde.
+    espera-dependencia: 5s
 
 logging:
   pattern:

@@ -12,6 +12,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import co.gov.redvital.donacion.aplicacion.casodeuso.EvaluarAlertas;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ProcesarVencimientos;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.CuentasIdentidadPort;
+import co.gov.redvital.donacion.aplicacion.puerto.salida.ProyeccionCampaniasPort;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
+import java.lang.reflect.InvocationTargetException;
+import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.SQLException;
@@ -21,6 +26,9 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedDeque;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BooleanSupplier;
 import org.apache.kafka.clients.consumer.ConsumerConfig;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
@@ -32,12 +40,14 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.apache.kafka.common.serialization.StringSerializer;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Primary;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.CannotGetJdbcConnectionException;
 import org.springframework.security.oauth2.core.DelegatingOAuth2TokenValidator;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.security.oauth2.jwt.JwtValidators;
@@ -61,6 +71,7 @@ class ServicioDonacionIntegracionTest {
 
     private static final String CAMPANIA_PUBLICADA = "redvital.campanias.campaign-published.v1";
     private static final String DONACION_COMPLETADA = "redvital.donacion.donation-completed.v1";
+    private static final String AVISO_SOLICITADO = "redvital.donacion.notice-requested.v1";
 
     @DynamicPropertySource
     static void propiedades(DynamicPropertyRegistry r) {
@@ -73,6 +84,9 @@ class ServicioDonacionIntegracionTest {
         r.add("redvital.jwt.jwks-uri", () -> "http://127.0.0.1:9/no-se-usa");
         r.add("redvital.identidad.url", () -> "http://127.0.0.1:9");
         r.add("redvital.identidad.secreto", () -> "no-se-usa");
+        // Esperas cortas para las pruebas de fallos del consumidor.
+        r.add("redvital.kafka.espera-reintento", () -> "3000");
+        r.add("redvital.kafka.espera-dependencia", () -> "500ms");
     }
 
     @TestConfiguration
@@ -89,8 +103,61 @@ class ServicioDonacionIntegracionTest {
         }
     }
 
+    /**
+     * Fallos programados en la proyección de campañas, por evento, para probar
+     * cómo reacciona el consumidor. Envuelve el adaptador real: lo que no está
+     * programado llega a la base como siempre. Es seguro entre hilos, porque el
+     * consumidor corre en el suyo.
+     */
+    @TestConfiguration
+    static class FallasProgramadas {
+
+        static final Map<UUID, ConcurrentLinkedDeque<RuntimeException>> PENDIENTES = new ConcurrentHashMap<>();
+        static final Map<UUID, AtomicInteger> INTENTOS = new ConcurrentHashMap<>();
+
+        static void programar(UUID eventoId, RuntimeException... fallas) {
+            PENDIENTES.put(eventoId, new ConcurrentLinkedDeque<>(List.of(fallas)));
+        }
+
+        static int intentos(UUID eventoId) {
+            return INTENTOS.getOrDefault(eventoId, new AtomicInteger()).get();
+        }
+
+        @Bean
+        static BeanPostProcessor fallasEnLaProyeccion() {
+            return new BeanPostProcessor() {
+                @Override
+                public Object postProcessAfterInitialization(Object bean, String nombre) {
+                    if (!(bean instanceof ProyeccionCampaniasPort real)) {
+                        return bean;
+                    }
+                    return Proxy.newProxyInstance(ProyeccionCampaniasPort.class.getClassLoader(),
+                            new Class<?>[] {ProyeccionCampaniasPort.class}, (proxy, metodo, argumentos) -> {
+                                if (metodo.getName().equals("guardar")) {
+                                    UUID eventoId = (UUID) argumentos[1];
+                                    INTENTOS.computeIfAbsent(eventoId, k -> new AtomicInteger()).incrementAndGet();
+                                    var fallas = PENDIENTES.get(eventoId);
+                                    RuntimeException falla = fallas == null ? null : fallas.poll();
+                                    if (falla != null) {
+                                        throw falla;
+                                    }
+                                }
+                                try {
+                                    return metodo.invoke(real, argumentos);
+                                } catch (InvocationTargetException e) {
+                                    throw e.getCause();
+                                }
+                            });
+                }
+            };
+        }
+    }
+
     @MockitoBean
     CuentasIdentidadPort cuentas;
+
+    @Autowired
+    MeterRegistry metricas;
 
     @Autowired
     MockMvc mvc;
@@ -164,6 +231,51 @@ class ServicioDonacionIntegracionTest {
     }
 
     // ------------------------------------------------------------------ M3 y eventos
+
+    @Test
+    void el_registro_pide_el_correo_de_confirmacion_sin_que_el_correo_viaje_por_kafka() throws Exception {
+        UUID usuario = UUID.randomUUID();
+        when(cuentas.crearCuentaDonante(anyString(), anyString(), anyString(), anyString())).thenReturn(usuario);
+        String documento = documentoNuevo();
+        String correo = "confirmacion" + documento + "@correo.test";
+
+        JsonNode creado = cuerpo(enviar(post("/v1/donantes"), null, "confirmacion-" + documento,
+                registroConContacto(documento, correo, false)), 201);
+        String donanteId = creado.path("id").asString();
+
+        // EV-02 cuenta_creada: identificadores, nunca el correo ni el nombre.
+        ConsumerRecord<String, String> aviso = esperarMensaje(AVISO_SOLICITADO, donanteId);
+        assertThat(cabecera(aviso, "evento-tipo")).isEqualTo("notice.requested");
+        JsonNode carga = json.readTree(aviso.value());
+        assertThat(carga.path("tipo_aviso").asString()).isEqualTo("cuenta_creada");
+        assertThat(carga.path("destinatario_id").asString()).isEqualTo(donanteId);
+        assertThat(aviso.value()).doesNotContain(correo).doesNotContain("Laura").doesNotContain(documento);
+
+        // Notificaciones resuelve el contacto en Donación al entregar.
+        String notificaciones = EntornoIntegracion.token("notificaciones", "servicio", "");
+        String ruta = "/internal/v1/donantes/" + donanteId + "/contacto?tipo=";
+        JsonNode contacto = cuerpo(enviar(get(ruta + "cuenta_creada"), notificaciones, null, null), 200);
+        assertThat(contacto.path("contactable").asBoolean()).isTrue();
+        assertThat(contacto.path("correo").asString()).isEqualTo(correo);
+        assertThat(contacto.path("nombre").asString()).isEqualTo("Laura Pérez");
+        assertThat(contacto.has("telefono")).isFalse();
+        assertThat(contacto.has("documento")).isFalse();
+
+        // Sin el consentimiento de avisos no se le avisan campañas, pero sí se le confirma la cuenta.
+        JsonNode sinConsentimiento = cuerpo(enviar(get(ruta + "campania_publicada"), notificaciones, null, null), 200);
+        assertThat(sinConsentimiento.path("contactable").asBoolean()).isFalse();
+        assertThat(sinConsentimiento.has("correo")).isFalse();
+
+        problema(enviar(get(ruta + "otro_tipo"), notificaciones, null, null), 400, "validacion");
+        problema(enviar(get("/internal/v1/donantes/" + UUID.randomUUID() + "/contacto?tipo=cuenta_creada"),
+                notificaciones, null, null), 404, "no-encontrado");
+        // Cualquier otro sujeto recibe 404, como ante una ruta inexistente.
+        problema(enviar(get(ruta + "cuenta_creada"), EntornoIntegracion.token("donacion", "servicio", ""), null, null),
+                404, "no-encontrado");
+        problema(enviar(get(ruta + "cuenta_creada"), EntornoIntegracion.token(usuario.toString(), "donante", ""),
+                null, null), 404, "no-encontrado");
+        problema(enviar(get(ruta + "cuenta_creada"), null, null, null), 401, "sesion-invalida");
+    }
 
     @Test
     void ciclo_de_vida_completo_con_campania_por_kafka_y_evento_de_donacion() throws Exception {
@@ -350,6 +462,51 @@ class ServicioDonacionIntegracionTest {
         ConsumerRecord<String, String> muerto = esperarMensajePorCabecera(CAMPANIA_PUBLICADA + ".donacion.dlt",
                 "evento-id", eventoId.toString());
         assertThat(muerto.value()).isEqualTo("{esto no es json");
+        // No se reintenta: un mensaje mal formado fallaría igual las tres veces.
+        assertThat(llegaMensajePorCabecera(CAMPANIA_PUBLICADA + ".donacion.retry-0", "evento-id",
+                eventoId.toString(), Duration.ofSeconds(3))).isFalse();
+        // Nunca se descarta en silencio: el manejador de mensajes muertos lo cuenta para la alerta.
+        esperar(() -> {
+            Counter contador = metricas.find("redvital_eventos_mensajes_muertos").counter();
+            return contador != null && contador.count() >= 1;
+        });
+    }
+
+    @Test
+    void un_evento_que_falla_se_reintenta_aparte_sin_detener_a_los_que_vienen_detras() throws Exception {
+        UUID institucion = UUID.randomUUID();
+        UUID primera = UUID.randomUUID();
+        UUID segunda = UUID.randomUUID();
+        UUID eventoPrimera = UUID.randomUUID();
+        FallasProgramadas.programar(eventoPrimera, new IllegalStateException("falla simulada del mensaje"));
+
+        // Misma clave: misma partición y en este orden.
+        String clave = UUID.randomUUID().toString();
+        publicarCampania(clave, eventoPrimera, cargaCampania(primera, institucion));
+        publicarCampania(clave, UUID.randomUUID(), cargaCampania(segunda, institucion));
+
+        // La segunda se aplica mientras la primera espera su turno en el tema de reintento.
+        esperar(() -> existeCampania(segunda));
+        assertThat(existeCampania(primera)).as("la primera aún espera su reintento").isFalse();
+        assertThat(cabecera(esperarMensajePorCabecera(CAMPANIA_PUBLICADA + ".donacion.retry-0", "evento-id",
+                eventoPrimera.toString()), "evento-id")).isEqualTo(eventoPrimera.toString());
+        esperar(() -> existeCampania(primera));
+        assertThat(FallasProgramadas.intentos(eventoPrimera)).isEqualTo(2);
+    }
+
+    @Test
+    void con_la_base_caida_el_evento_espera_en_su_sitio_y_no_llena_los_temas_de_reintento() throws Exception {
+        UUID campania = UUID.randomUUID();
+        UUID evento = UUID.randomUUID();
+        var baseCaida = new CannotGetJdbcConnectionException("base caída simulada");
+        FallasProgramadas.programar(evento, baseCaida, baseCaida);
+
+        publicarCampania(campania.toString(), evento, cargaCampania(campania, UUID.randomUUID()));
+
+        esperar(() -> existeCampania(campania));
+        assertThat(FallasProgramadas.intentos(evento)).as("dos intentos con la base caída y uno bueno").isEqualTo(3);
+        assertThat(llegaMensajePorCabecera(CAMPANIA_PUBLICADA + ".donacion.retry-0", "evento-id",
+                evento.toString(), Duration.ofSeconds(3))).isFalse();
     }
 
     // ------------------------------------------------------------------ utilidades
@@ -408,6 +565,14 @@ class ServicioDonacionIntegracionTest {
                 + "\"autoriza_avisos_campanas\":true,\"version_aviso\":\"AV-2026.1\"}";
     }
 
+    private static String registroConContacto(String documento, String correo, boolean avisos) {
+        return "{\"documento\":\"" + documento + "\",\"nombre\":\"Laura Pérez\",\"fecha_nacimiento\":\""
+                + LocalDate.now().minusYears(30) + "\",\"correo_acceso\":\"" + correo + "\","
+                + "\"credencial\":\"ClaveSegura2026\",\"correo\":\"" + correo + "\",\"telefono\":\"3001234567\","
+                + "\"municipio_ruta\":\"/00/05/05001\",\"autoriza_tratamiento_datos\":true,"
+                + "\"autoriza_avisos_campanas\":" + avisos + ",\"version_aviso\":\"AV-2026.1\"}";
+    }
+
     private static String documentoNuevo() {
         return String.valueOf(1_000_000_000L + (long) (Math.random() * 8_000_000_000L));
     }
@@ -432,11 +597,27 @@ class ServicioDonacionIntegracionTest {
     }
 
     private static void publicarCampania(UUID campania, UUID institucion, UUID eventoId, String carga) {
+        publicarCampania(campania.toString(), eventoId, carga);
+    }
+
+    private static String cargaCampania(UUID campania, UUID institucion) {
+        return "{\"campania_id\":\"" + campania + "\",\"institucion_id\":\"" + institucion + "\","
+                + "\"nombre\":\"Jornada de prueba\",\"sede\":\"Parque\",\"territorio_codigo\":\"05001\","
+                + "\"territorio_ruta\":\"/00/05/05001\",\"inicia_en\":\"" + Instant.now().minusSeconds(3600) + "\","
+                + "\"termina_en\":\"" + Instant.now().plusSeconds(8 * 3600) + "\","
+                + "\"publicada_en\":\"" + Instant.now().minusSeconds(60) + "\"}";
+    }
+
+    private static boolean existeCampania(UUID campania) {
+        return existeFila("SELECT 1 FROM campania_publicada WHERE campania_id = '" + campania + "'");
+    }
+
+    private static void publicarCampania(String clave, UUID eventoId, String carga) {
         try (var productor = new KafkaProducer<String, String>(Map.of(
                 ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, EntornoIntegracion.KAFKA.getBootstrapServers(),
                 ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
                 ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class))) {
-            var registro = new ProducerRecord<>(CAMPANIA_PUBLICADA, campania.toString(), carga);
+            var registro = new ProducerRecord<>(CAMPANIA_PUBLICADA, clave, carga);
             registro.headers().add("evento-id", eventoId.toString().getBytes(StandardCharsets.UTF_8));
             registro.headers().add("evento-tipo", "campaign.published".getBytes(StandardCharsets.UTF_8));
             registro.headers().add("correlacion-id", UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
@@ -455,14 +636,34 @@ class ServicioDonacionIntegracionTest {
         return esperarEn(tema, r -> valor.equals(cabecera(r, cabecera)));
     }
 
-    private static ConsumerRecord<String, String> esperarEn(String tema,
-                                                            java.util.function.Predicate<ConsumerRecord<String, String>> filtro) {
-        try (var consumidor = new KafkaConsumer<String, String>(Map.of(
+    /** Lee el tema desde el principio durante la ventana dada y dice si apareció el mensaje. */
+    private static boolean llegaMensajePorCabecera(String tema, String cabecera, String valor, Duration ventana) {
+        try (var consumidor = consumidorDePrueba()) {
+            consumidor.subscribe(List.of(tema));
+            Instant limite = Instant.now().plus(ventana);
+            while (Instant.now().isBefore(limite)) {
+                for (ConsumerRecord<String, String> r : consumidor.poll(Duration.ofMillis(500))) {
+                    if (valor.equals(cabecera(r, cabecera))) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static KafkaConsumer<String, String> consumidorDePrueba() {
+        return new KafkaConsumer<>(Map.of(
                 ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, EntornoIntegracion.KAFKA.getBootstrapServers(),
                 ConsumerConfig.GROUP_ID_CONFIG, "prueba-" + UUID.randomUUID(),
                 ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest",
                 ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class,
-                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class))) {
+                ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class));
+    }
+
+    private static ConsumerRecord<String, String> esperarEn(String tema,
+                                                            java.util.function.Predicate<ConsumerRecord<String, String>> filtro) {
+        try (var consumidor = consumidorDePrueba()) {
             consumidor.subscribe(List.of(tema));
             Instant limite = Instant.now().plus(Duration.ofSeconds(45));
             while (Instant.now().isBefore(limite)) {

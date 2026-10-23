@@ -12,6 +12,7 @@ import co.gov.redvital.donacion.dominio.modelo.CampaniaPublicada;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Map;
 import java.util.UUID;
 
 /**
@@ -58,9 +59,12 @@ public final class AplicarCampaniaPublicada {
                     evento.terminaEn(), evento.publicadaEn(), "publicada"), eventoId, ahora);
 
             if (avisosHabilitados && evento.terminaEn().isAfter(ahora)) {
+                // Datos de la campaña para la plantilla (DD, Tabla 18): nada del donante.
+                Map<String, String> plantilla = Map.of("nombre", evento.nombre(), "sede", evento.sede(),
+                        "inicia_en", evento.iniciaEn().toString(), "termina_en", evento.terminaEn().toString());
                 for (UUID donanteId : donantes.conAvisosEnTerritorio(evento.territorioRuta())) {
                     var aviso = new AvisoSolicitadoV1(UUID.randomUUID(), AvisoSolicitadoV1.AVISO_CAMPANIA_PUBLICADA,
-                            "donante", donanteId, evento.campaniaId(), ahora);
+                            "donante", donanteId, evento.campaniaId(), plantilla, ahora);
                     bandeja.encolar(new BandejaSalidaPort.EventoSalida(aviso.avisoId(), AvisoSolicitadoV1.TIPO,
                             AvisoSolicitadoV1.VERSION, Temas.AVISO_SOLICITADO, donanteId.toString(), aviso,
                             "campania_publicada:" + evento.campaniaId() + ":" + donanteId, correlacionId), ahora);

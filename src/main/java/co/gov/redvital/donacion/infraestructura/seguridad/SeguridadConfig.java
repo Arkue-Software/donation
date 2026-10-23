@@ -43,7 +43,10 @@ class SeguridadConfig {
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/prometheus").permitAll()
                         .requestMatchers(HttpMethod.POST, "/v1/intenciones", "/v1/donantes").permitAll()
                         .requestMatchers(HttpMethod.GET, "/v1/intenciones/*").permitAll()
-                        // /internal no tiene controladores: responde 404 sin revelar nada.
+                        // Contacto de un donante para Notificaciones: token de servicio (el
+                        // controlador responde 404 a cualquier otro sujeto).
+                        .requestMatchers(HttpMethod.GET, "/internal/v1/donantes/*/contacto").authenticated()
+                        // El resto de /internal no tiene controladores: responde 404 sin revelar nada.
                         .requestMatchers("/internal/**", "/error").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(o -> o

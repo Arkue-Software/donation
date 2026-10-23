@@ -4,6 +4,7 @@ import co.gov.redvital.donacion.aplicacion.casodeuso.ActualizarPerfilDonante;
 import co.gov.redvital.donacion.aplicacion.casodeuso.AplicarCampaniaPublicada;
 import co.gov.redvital.donacion.aplicacion.casodeuso.BuscarDonantePresente;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ConfirmarFraccionamiento;
+import co.gov.redvital.donacion.aplicacion.casodeuso.ConsultarContactoDonante;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ConsultarIntencion;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ConsultarInventario;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ConsultasDeDonaciones;
@@ -105,9 +106,16 @@ class CasosDeUsoConfig {
     RegistrarDonante registrarDonante(RepositorioDonantes donantes, RepositorioConsentimientos consentimientos,
                                       CuentasIdentidadPort cuentas, ResumidorDocumento resumidor,
                                       IdempotenciaPort idempotencia, HuellaPeticion huellas,
-                                      UnidadDeTrabajo unidadDeTrabajo, Auditor auditor, Clock reloj) {
+                                      UnidadDeTrabajo unidadDeTrabajo, Auditor auditor, BandejaSalidaPort bandeja,
+                                      PropiedadesRedVital propiedades, Clock reloj) {
         return new RegistrarDonante(donantes, consentimientos, cuentas, resumidor, idempotencia, huellas,
-                unidadDeTrabajo, auditor, reloj);
+                unidadDeTrabajo, auditor, bandeja, propiedades.avisos().habilitados(), reloj);
+    }
+
+    @Bean
+    ConsultarContactoDonante consultarContactoDonante(RepositorioDonantes donantes,
+                                                      RepositorioConsentimientos consentimientos) {
+        return new ConsultarContactoDonante(donantes, consentimientos);
     }
 
     @Bean

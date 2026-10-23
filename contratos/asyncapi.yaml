@@ -197,7 +197,11 @@ components:
           format: uuid
         tipo_aviso:
           type: string
-          enum: [campania_publicada]
+          description: |
+            Tipo de aviso (DD, Tabla 18). cuenta_creada confirma el registro de un
+            donante y no exige el consentimiento de avisos. Añadir un tipo es
+            compatible si el consumidor se despliega antes que el productor.
+          enum: [campania_publicada, cuenta_creada]
         destinatario_tipo:
           type: string
           enum: [donante]
@@ -207,6 +211,16 @@ components:
         campania_id:
           type: [string, 'null']
           format: uuid
+        plantilla:
+          type: object
+          description: |
+            Datos del tipo de aviso para la plantilla, sin ningún dato personal
+            del destinatario. campania_publicada: nombre, sede, inicia_en y
+            termina_en de la campaña. cuenta_creada: vacía. Opcional: un evento
+            anterior sin plantilla sigue siendo válido.
+          additionalProperties:
+            type: string
+            maxLength: 200
         generado_en:
           type: string
           format: date-time
