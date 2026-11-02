@@ -2,6 +2,7 @@ package co.gov.redvital.donacion.aplicacion.casodeuso;
 
 import co.gov.redvital.donacion.aplicacion.comun.Auditor;
 import co.gov.redvital.donacion.aplicacion.comun.ContextoPeticion;
+import co.gov.redvital.donacion.aplicacion.comun.ResolutorAlcance;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.RepositorioAlertas;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.UnidadDeTrabajo;
 import co.gov.redvital.donacion.dominio.excepcion.Conflicto;
@@ -14,19 +15,26 @@ import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
 
-/** Alertas de la institución propia. Las lee el operador; las atiende el administrador de banco. */
+/**
+ * Alertas (DD 15.5, grupo 8). Las leen el operador y el administrador de banco
+ * de su institución y el coordinador de su territorio; solo el administrador
+ * de banco las atiende.
+ */
 public final class GestionarAlertas {
 
     private final RepositorioAlertas alertas;
     private final UnidadDeTrabajo unidadDeTrabajo;
     private final Auditor auditor;
     private final Clock reloj;
+    private final ResolutorAlcance alcance;
 
-    public GestionarAlertas(RepositorioAlertas alertas, UnidadDeTrabajo unidadDeTrabajo, Auditor auditor, Clock reloj) {
+    public GestionarAlertas(RepositorioAlertas alertas, UnidadDeTrabajo unidadDeTrabajo, Auditor auditor, Clock reloj,
+                            ResolutorAlcance alcance) {
         this.alertas = alertas;
         this.unidadDeTrabajo = unidadDeTrabajo;
         this.auditor = auditor;
         this.reloj = reloj;
+        this.alcance = alcance;
     }
 
     public List<Alerta> listar(Actor actor, String estado) {
@@ -38,7 +46,7 @@ public final class GestionarAlertas {
                 throw new DatosInvalidos("El parámetro estado no es un estado de alerta válido.");
             }
         }
-        return alertas.deInstitucion(actor.institucion(), filtro);
+        return alertas.deInstituciones(alcance.de(actor).instituciones(), filtro);
     }
 
     public Alerta atender(Actor actor, UUID id, ContextoPeticion ctx) {

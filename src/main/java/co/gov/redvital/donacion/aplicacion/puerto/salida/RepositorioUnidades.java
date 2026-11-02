@@ -7,6 +7,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 public interface RepositorioUnidades {
@@ -25,7 +26,8 @@ public interface RepositorioUnidades {
 
     List<Unidad> deDonacionParaActualizar(UUID donacionId);
 
-    Pagina<Unidad> listar(UUID institucionId, CodigoEstado estado, String componente, int pagina, int tamano);
+    /** Unidades en custodia de cualquiera de las instituciones; un conjunto vacío no devuelve nada. */
+    Pagina<Unidad> listar(Set<UUID> instituciones, CodigoEstado estado, String componente, int pagina, int tamano);
 
     /** Unidades que el proceso de vencimiento debe retirar, saltando las bloqueadas. */
     List<Unidad> vencidasParaActualizar(LocalDate hoy, int limite);

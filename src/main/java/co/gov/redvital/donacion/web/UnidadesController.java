@@ -23,7 +23,8 @@ import org.springframework.web.bind.annotation.RestController;
 
 /**
  * M3, ciclo de vida de la unidad (DD, Tabla 35). Solo el operador del banco
- * custodio escribe; el administrador de banco consulta.
+ * custodio escribe. Consultan el administrador de banco y, en su territorio,
+ * U5 y U6 (grupo 4); la trazabilidad de una unidad la lee también U7 (grupo 5).
  */
 @RestController
 @RequestMapping("/v1/unidades")
@@ -48,7 +49,7 @@ class UnidadesController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAnyRole('operador', 'admin_banco')")
+    @PreAuthorize("hasAnyRole('operador', 'admin_banco', 'coordinador', 'admin_nacional')")
     Pagina<Vistas.UnidadVista> listar(Actor actor, @RequestParam(required = false) String estado,
                                       @RequestParam(required = false) String componente,
                                       @RequestParam(defaultValue = "0") int pagina,
@@ -57,13 +58,13 @@ class UnidadesController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('operador', 'admin_banco')")
+    @PreAuthorize("hasAnyRole('operador', 'admin_banco', 'coordinador', 'admin_nacional', 'auditor')")
     Vistas.UnidadVista detalle(Actor actor, @PathVariable UUID id) {
         return Vistas.UnidadVista.de(consultas.detalle(actor, id));
     }
 
     @GetMapping("/{id}/eventos")
-    @PreAuthorize("hasAnyRole('operador', 'admin_banco')")
+    @PreAuthorize("hasAnyRole('operador', 'admin_banco', 'coordinador', 'admin_nacional', 'auditor')")
     List<Vistas.EventoVista> eventos(Actor actor, @PathVariable UUID id) {
         return consultas.eventos(actor, id).stream().map(Vistas.EventoVista::de).toList();
     }

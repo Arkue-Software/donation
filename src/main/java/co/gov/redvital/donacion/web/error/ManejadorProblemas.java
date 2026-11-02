@@ -15,6 +15,7 @@ import co.gov.redvital.donacion.infraestructura.seguridad.ManejadorDenegaciones;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
@@ -122,6 +123,17 @@ class ManejadorProblemas {
     ResponseEntity<Problema> tipoMedio(HttpServletRequest peticion) {
         return escritor.respuesta(peticion, 415, "tipo-no-admitido", "Tipo de contenido no admitido",
                 "El cuerpo debe enviarse como application/json.");
+    }
+
+    /**
+     * Dos peticiones simultáneas que pasaron la misma comprobación (un perfil por
+     * cuenta, un documento por perfil) chocan en la restricción única de la base:
+     * la segunda es un conflicto, no un error interno.
+     */
+    @ExceptionHandler(DuplicateKeyException.class)
+    ResponseEntity<Problema> duplicado(HttpServletRequest peticion) {
+        return escritor.respuesta(peticion, 409, "conflicto", "Conflicto",
+                "Otra operación igual se registró al mismo tiempo. Consulta el estado antes de intentarlo de nuevo.");
     }
 
     @ExceptionHandler(Exception.class)

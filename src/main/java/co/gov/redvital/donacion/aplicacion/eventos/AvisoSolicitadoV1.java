@@ -6,8 +6,10 @@ import java.util.UUID;
 
 /**
  * EV-02 {@code notice.requested}, versión 1. Clave de partición: el
- * destinatario. Lleva identificadores, nunca el correo ni el nombre: el
- * trabajador de Notificaciones resuelve el contacto por su propio canal. La
+ * destinatario. Los servicios solo se comunican por Kafka, así que el aviso
+ * lleva el correo y el nombre del destinatario, resueltos por Donación al
+ * decidirlo (con el consentimiento vigente en ese momento): Notificaciones no
+ * consulta a nadie. Un donante sin correo de contacto no recibe aviso. La
  * plantilla lleva los datos del tipo de aviso que no son personales (DD,
  * Tabla 18), con claves en snake_case; es opcional y puede ir vacía.
  */
@@ -16,6 +18,8 @@ public record AvisoSolicitadoV1(
         String tipoAviso,
         String destinatarioTipo,
         UUID destinatarioId,
+        String correo,
+        String nombre,
         UUID campaniaId,
         Map<String, String> plantilla,
         Instant generadoEn) {

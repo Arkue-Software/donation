@@ -102,17 +102,17 @@ class RepositorioDonantesJdbc implements RepositorioDonantes {
     }
 
     @Override
-    public List<UUID> conAvisosEnTerritorio(String territorioRuta) {
+    public List<Contacto> conAvisosEnTerritorio(String territorioRuta) {
         return jdbc.sql("""
-                SELECT d.id FROM donante d
-                WHERE d.activo
+                SELECT d.id, d.correo, d.nombre FROM donante d
+                WHERE d.activo AND d.correo IS NOT NULL
                   AND (d.municipio_ruta = :ruta OR d.municipio_ruta LIKE :prefijo)
                   AND (SELECT c.otorgado FROM consentimiento c
                        WHERE c.donante_id = d.id AND c.finalidad = 'avisos_campanas'
                        ORDER BY c.creado_en DESC LIMIT 1) IS TRUE""")
                 .param("ruta", territorioRuta)
                 .param("prefijo", territorioRuta + "/%")
-                .query((rs, n) -> Sql.uuid(rs, "id"))
+                .query((rs, n) -> new Contacto(Sql.uuid(rs, "id"), rs.getString("correo"), rs.getString("nombre")))
                 .list();
     }
 

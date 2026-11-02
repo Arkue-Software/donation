@@ -2,16 +2,13 @@ package co.gov.redvital.donacion.integracion;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
-import co.gov.redvital.donacion.aplicacion.casodeuso.EvaluarAlertas;
+import co.gov.redvital.donacion.aplicacion.casodeuso.PublicarIndicadores;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ProcesarVencimientos;
-import co.gov.redvital.donacion.aplicacion.puerto.salida.CuentasIdentidadPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.ProyeccionCampaniasPort;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -54,7 +51,6 @@ import org.springframework.security.oauth2.jwt.JwtValidators;
 import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
@@ -72,6 +68,9 @@ class ServicioDonacionIntegracionTest {
     private static final String CAMPANIA_PUBLICADA = "redvital.campanias.campaign-published.v1";
     private static final String DONACION_COMPLETADA = "redvital.donacion.donation-completed.v1";
     private static final String AVISO_SOLICITADO = "redvital.donacion.notice-requested.v1";
+    private static final String INSTITUCION_CAMBIADA = "redvital.institucional.institution-changed.v1";
+    private static final String INDICADORES_ACTUALIZADOS = "redvital.donacion.indicators-updated.v1";
+    private static final String AUDITORIA_REGISTRADA = "redvital.donacion.audit-recorded.v1";
 
     @DynamicPropertySource
     static void propiedades(DynamicPropertyRegistry r) {
@@ -81,9 +80,7 @@ class ServicioDonacionIntegracionTest {
         r.add("spring.kafka.bootstrap-servers", EntornoIntegracion.KAFKA::getBootstrapServers);
         r.add("spring.kafka.security.protocol", () -> "PLAINTEXT");
         r.add("redvital.documento.clave-hmac", () -> "clave-hmac-solo-para-pruebas-de-integracion");
-        r.add("redvital.jwt.jwks-uri", () -> "http://127.0.0.1:9/no-se-usa");
-        r.add("redvital.identidad.url", () -> "http://127.0.0.1:9");
-        r.add("redvital.identidad.secreto", () -> "no-se-usa");
+        r.add("redvital.jwt.llave-publica", EntornoIntegracion::archivoLlavePublica);
         // Esperas cortas para las pruebas de fallos del consumidor.
         r.add("redvital.kafka.espera-reintento", () -> "3000");
         r.add("redvital.kafka.espera-dependencia", () -> "500ms");
@@ -153,8 +150,8 @@ class ServicioDonacionIntegracionTest {
         }
     }
 
-    @MockitoBean
-    CuentasIdentidadPort cuentas;
+    @Autowired
+    PublicarIndicadores publicarIndicadores;
 
     @Autowired
     MeterRegistry metricas;
@@ -168,8 +165,6 @@ class ServicioDonacionIntegracionTest {
     @Autowired
     ProcesarVencimientos vencimientos;
 
-    @Autowired
-    EvaluarAlertas alertas;
 
     // ------------------------------------------------------------------ M1
 
@@ -199,17 +194,47 @@ class ServicioDonacionIntegracionTest {
     }
 
     @Test
-    void crear_cuenta_de_donante_y_consultar_el_perfil_propio() throws Exception {
+    void perfiles_simultaneos_de_la_misma_cuenta_dejan_uno_y_los_demas_son_conflicto() throws Exception {
+        String donante = EntornoIntegracion.token(UUID.randomUUID().toString(), "donante", "");
+        String documento = documentoNuevo();
+        var hilos = java.util.concurrent.Executors.newFixedThreadPool(8);
+        try {
+            var inicio = new java.util.concurrent.CountDownLatch(1);
+            var pendientes = new java.util.ArrayList<java.util.concurrent.Future<Integer>>();
+            for (int i = 0; i < 8; i++) {
+                String clave = "simultaneo-" + i + "-" + documento;
+                pendientes.add(hilos.submit(() -> {
+                    inicio.await();
+                    return enviar(post("/v1/donantes"), donante, clave, registroDonante(documento, null, true))
+                            .getResponse().getStatus();
+                }));
+            }
+            inicio.countDown();
+            var estados = new java.util.ArrayList<Integer>();
+            for (var f : pendientes) {
+                estados.add(f.get(60, java.util.concurrent.TimeUnit.SECONDS));
+            }
+            assertThat(estados).as("nunca un error interno").containsOnly(201, 409);
+            assertThat(estados).filteredOn(e -> e == 201).hasSize(1);
+        } finally {
+            hilos.shutdownNow();
+        }
+    }
+
+    @Test
+    void crear_el_perfil_con_la_cuenta_del_token_y_consultarlo() throws Exception {
         UUID usuario = UUID.randomUUID();
-        when(cuentas.crearCuentaDonante(anyString(), anyString(), anyString(), anyString())).thenReturn(usuario);
+        String donante = EntornoIntegracion.token(usuario.toString(), "donante", "");
         String documento = documentoNuevo();
 
-        JsonNode creado = cuerpo(enviar(post("/v1/donantes"), null, "registro-" + documento,
-                registroDonante(documento, "laura" + documento + "@correo.test", true)), 201);
+        JsonNode creado = cuerpo(enviar(post("/v1/donantes"), donante, "registro-" + documento,
+                registroDonante(documento, null, true)), 201);
         assertThat(creado.path("usuario_id").asString()).isEqualTo(usuario.toString());
         assertThat(creado.has("documento")).as("el documento nunca se devuelve").isFalse();
+        JsonNode reenvio = cuerpo(enviar(post("/v1/donantes"), donante, "registro-" + documento,
+                registroDonante(documento, null, true)), 201);
+        assertThat(reenvio.path("id").asString()).as("el reenvío no crea otro perfil").isEqualTo(creado.path("id").asString());
 
-        String donante = EntornoIntegracion.token(usuario.toString(), "donante", "");
         JsonNode perfil = cuerpo(enviar(get("/v1/donantes/me"), donante, null, null), 200);
         assertThat(perfil.path("nombre").asString()).isEqualTo("Laura Pérez");
         assertThat(perfil.path("grupo_sanguineo").isNull()).as("el grupo se tipifica en la primera donación").isTrue();
@@ -224,57 +249,49 @@ class ServicioDonacionIntegracionTest {
                 "{\"finalidad\":\"avisos_campanas\",\"otorgado\":false,\"version_aviso\":\"AV-2026.1\"}"), 200);
         assertThat(buscar(revocado, "finalidad", "avisos_campanas").path("otorgado").asBoolean()).isFalse();
 
-        problema(enviar(post("/v1/donantes"), null, "registro-repetido-" + documento,
-                registroDonante(documento, "otra" + documento + "@correo.test", true)), 409, "conflicto");
-        problema(enviar(post("/v1/donantes"), null, "sin-consentimiento-" + documento,
-                registroDonante(documentoNuevo(), "x" + documento + "@correo.test", false)), 422, "consentimiento-requerido");
+        // Una cuenta tiene un perfil, y un documento una cuenta.
+        problema(enviar(post("/v1/donantes"), donante, "segundo-perfil-" + documento,
+                registroDonante(documentoNuevo(), null, true)), 409, "conflicto");
+        String otraCuenta = EntornoIntegracion.token(UUID.randomUUID().toString(), "donante", "");
+        problema(enviar(post("/v1/donantes"), otraCuenta, "repetido-" + documento,
+                registroDonante(documento, null, true)), 409, "conflicto");
+        problema(enviar(post("/v1/donantes"), otraCuenta, "sin-consentimiento-" + documento,
+                registroDonante(documentoNuevo(), null, false)), 422, "consentimiento-requerido");
+        // La donación de sangre exige 18 años cumplidos.
+        problema(enviar(post("/v1/donantes"), otraCuenta, "menor-" + documento,
+                registroDonante(documentoNuevo(), null, true).replace(
+                        LocalDate.now().minusYears(30).toString(), LocalDate.now().minusYears(17).toString())),
+                422, "menor-de-edad");
+        // El perfil se crea con la cuenta del token: sin sesión, o con otro rol, no.
+        problema(enviar(post("/v1/donantes"), null, "anonimo-" + documento, registroDonante(documentoNuevo(), null, true)),
+                401, "sesion-invalida");
+        problema(enviar(post("/v1/donantes"), EntornoIntegracion.token(UUID.randomUUID().toString(), "operador",
+                "institucion:" + UUID.randomUUID()), "operador-" + documento, registroDonante(documentoNuevo(), null, true)),
+                403, "operacion-no-permitida");
     }
 
     // ------------------------------------------------------------------ M3 y eventos
 
     @Test
-    void el_registro_pide_el_correo_de_confirmacion_sin_que_el_correo_viaje_por_kafka() throws Exception {
+    void el_aviso_de_cuenta_creada_lleva_el_destinatario_para_que_notificaciones_no_consulte_a_nadie()
+            throws Exception {
         UUID usuario = UUID.randomUUID();
-        when(cuentas.crearCuentaDonante(anyString(), anyString(), anyString(), anyString())).thenReturn(usuario);
         String documento = documentoNuevo();
-        String correo = "confirmacion" + documento + "@correo.test";
+        String correo = "confirmacion-" + UUID.randomUUID().toString().substring(0, 8) + "@correo.test";
 
-        JsonNode creado = cuerpo(enviar(post("/v1/donantes"), null, "confirmacion-" + documento,
-                registroConContacto(documento, correo, false)), 201);
+        JsonNode creado = cuerpo(enviar(post("/v1/donantes"), EntornoIntegracion.token(usuario.toString(), "donante", ""),
+                "confirmacion-" + documento, registroDonante(documento, correo, true)), 201);
         String donanteId = creado.path("id").asString();
 
-        // EV-02 cuenta_creada: identificadores, nunca el correo ni el nombre.
+        // EV-02 cuenta_creada: el correo y el nombre para el saludo, nada más del donante.
         ConsumerRecord<String, String> aviso = esperarMensaje(AVISO_SOLICITADO, donanteId);
         assertThat(cabecera(aviso, "evento-tipo")).isEqualTo("notice.requested");
         JsonNode carga = json.readTree(aviso.value());
         assertThat(carga.path("tipo_aviso").asString()).isEqualTo("cuenta_creada");
         assertThat(carga.path("destinatario_id").asString()).isEqualTo(donanteId);
-        assertThat(aviso.value()).doesNotContain(correo).doesNotContain("Laura").doesNotContain(documento);
-
-        // Notificaciones resuelve el contacto en Donación al entregar.
-        String notificaciones = EntornoIntegracion.token("notificaciones", "servicio", "");
-        String ruta = "/internal/v1/donantes/" + donanteId + "/contacto?tipo=";
-        JsonNode contacto = cuerpo(enviar(get(ruta + "cuenta_creada"), notificaciones, null, null), 200);
-        assertThat(contacto.path("contactable").asBoolean()).isTrue();
-        assertThat(contacto.path("correo").asString()).isEqualTo(correo);
-        assertThat(contacto.path("nombre").asString()).isEqualTo("Laura Pérez");
-        assertThat(contacto.has("telefono")).isFalse();
-        assertThat(contacto.has("documento")).isFalse();
-
-        // Sin el consentimiento de avisos no se le avisan campañas, pero sí se le confirma la cuenta.
-        JsonNode sinConsentimiento = cuerpo(enviar(get(ruta + "campania_publicada"), notificaciones, null, null), 200);
-        assertThat(sinConsentimiento.path("contactable").asBoolean()).isFalse();
-        assertThat(sinConsentimiento.has("correo")).isFalse();
-
-        problema(enviar(get(ruta + "otro_tipo"), notificaciones, null, null), 400, "validacion");
-        problema(enviar(get("/internal/v1/donantes/" + UUID.randomUUID() + "/contacto?tipo=cuenta_creada"),
-                notificaciones, null, null), 404, "no-encontrado");
-        // Cualquier otro sujeto recibe 404, como ante una ruta inexistente.
-        problema(enviar(get(ruta + "cuenta_creada"), EntornoIntegracion.token("donacion", "servicio", ""), null, null),
-                404, "no-encontrado");
-        problema(enviar(get(ruta + "cuenta_creada"), EntornoIntegracion.token(usuario.toString(), "donante", ""),
-                null, null), 404, "no-encontrado");
-        problema(enviar(get(ruta + "cuenta_creada"), null, null, null), 401, "sesion-invalida");
+        assertThat(carga.path("correo").asString()).isEqualTo(correo);
+        assertThat(carga.path("nombre").asString()).isEqualTo("Laura Pérez");
+        assertThat(aviso.value()).doesNotContain(documento).doesNotContain("3001234567");
     }
 
     @Test
@@ -294,9 +311,8 @@ class ServicioDonacionIntegracionTest {
         esperar(() -> existeFila("SELECT 1 FROM campania_publicada WHERE campania_id = '" + campania + "'"));
 
         UUID usuario = UUID.randomUUID();
-        when(cuentas.crearCuentaDonante(anyString(), anyString(), anyString(), anyString())).thenReturn(usuario);
         String documento = documentoNuevo();
-        cuerpo(enviar(post("/v1/donantes"), null, "r-" + documento,
+        cuerpo(enviar(post("/v1/donantes"), EntornoIntegracion.token(usuario.toString(), "donante", ""), "r-" + documento,
                 registroDonante(documento, "d" + documento + "@correo.test", true)), 201);
 
         JsonNode encontrado = cuerpo(enviar(post("/v1/donantes/busqueda"), operador, null,
@@ -380,8 +396,9 @@ class ServicioDonacionIntegracionTest {
 
         problema(enviar(get("/v1/unidades"), null, null, null), 401, "sesion-invalida");
         problema(enviar(get("/v1/unidades"), "token.alterado.x", null, null), 401, "sesion-invalida");
-        problema(enviar(get("/v1/unidades"), EntornoIntegracion.token(UUID.randomUUID().toString(), "coordinador",
-                "territorio:/00/05"), null, null), 403, "operacion-no-permitida");
+        // U7 lee la trazabilidad de una unidad, pero no el listado (DD 15.5, grupos 4 y 5).
+        problema(enviar(get("/v1/unidades"), EntornoIntegracion.token(UUID.randomUUID().toString(), "auditor",
+                "territorio:/00"), null, null), 403, "operacion-no-permitida");
         problema(enviar(get("/v1/unidades"), EntornoIntegracion.token(UUID.randomUUID().toString(), "donante", ""),
                 null, null), 403, "operacion-no-permitida");
         problema(enviar(post("/v1/donaciones"), EntornoIntegracion.token(UUID.randomUUID().toString(), "admin_banco",
@@ -391,7 +408,7 @@ class ServicioDonacionIntegracionTest {
                 "fuera-de-jurisdiccion");
         problema(enviar(get("/v1/unidades/" + UUID.randomUUID()), operador, null, null), 404, "no-encontrado");
         problema(enviar(get("/internal/v1/cualquier-cosa"), null, null, null), 404, "no-encontrado");
-        assertThat(existeFila("SELECT 1 FROM registro_auditoria WHERE resultado = 'denegado' AND rol = 'coordinador'"))
+        assertThat(existeFila("SELECT 1 FROM registro_auditoria WHERE resultado = 'denegado' AND rol = 'auditor'"))
                 .as("las denegaciones de rol quedan auditadas").isTrue();
     }
 
@@ -418,13 +435,25 @@ class ServicioDonacionIntegracionTest {
         problema(enviar(put("/v1/inventario/umbrales"), operador, null, "{\"umbrales\":[]}"), 403,
                 "operacion-no-permitida");
 
-        alertas.ejecutar();
+        // Guardar los umbrales reevalúa enseguida las alertas del banco: no hace falta esperar al proceso.
         JsonNode abiertas = cuerpo(enviar(get("/v1/alertas?estado=abierta"), operador, null, null), 200);
         assertThat(abiertas).extracting(a -> a.path("tipo").asString())
                 .contains("escasez", "vencimiento_proximo");
 
+        // Bajar el umbral por debajo de lo disponible cierra la escasez en la misma operación, y subirlo la reabre.
+        cuerpo(enviar(put("/v1/inventario/umbrales"), admin, null, "{\"umbrales\":[{\"componente\":\"plaquetas\","
+                + "\"grupo_sanguineo\":\"O+\",\"minimo_unidades\":1,\"dias_previos_vencimiento\":7}]}"), 200);
+        assertThat(cuerpo(enviar(get("/v1/alertas?estado=abierta"), operador, null, null), 200))
+                .extracting(a -> a.path("tipo").asString()).doesNotContain("escasez");
+        cuerpo(enviar(put("/v1/inventario/umbrales"), admin, null, "{\"umbrales\":[{\"componente\":\"plaquetas\","
+                + "\"grupo_sanguineo\":\"O+\",\"minimo_unidades\":5,\"dias_previos_vencimiento\":7}]}"), 200);
+        abiertas = cuerpo(enviar(get("/v1/alertas?estado=abierta"), operador, null, null), 200);
+        assertThat(abiertas).extracting(a -> a.path("tipo").asString()).contains("escasez");
+
         try (Connection c = EntornoIntegracion.superusuario()) {
-            c.createStatement().execute("UPDATE unidad SET fecha_vencimiento = current_date - 1 WHERE id = '"
+            // Dos días: la base usa la fecha UTC y el proceso la de Bogotá, que de
+            // 19:00 a 24:00 todavía es el día anterior.
+            c.createStatement().execute("UPDATE unidad SET fecha_vencimiento = current_date - 2 WHERE id = '"
                     + plaquetas + "'");
         }
         int retiradas = vencimientos.ejecutar();
@@ -525,6 +554,135 @@ class ServicioDonacionIntegracionTest {
         return mvc.perform(peticion.header("X-Forwarded-For", "10.0.0.7")).andReturn();
     }
 
+    // ------------------------------------------------- Institucional, solo por Kafka
+
+    @Test
+    void la_proyeccion_de_instituciones_se_alimenta_de_EV07_y_no_retrocede() throws Exception {
+        UUID institucion = UUID.randomUUID();
+        Instant ahora = Instant.now();
+        publicarInstitucion(institucion, UUID.randomUUID(), "Banco Nuevo (ficticio)", "/00/05/05088", true, ahora);
+        esperar(() -> existeFila("SELECT 1 FROM institucion_proyeccion WHERE institucion_id = '" + institucion
+                + "' AND nombre = 'Banco Nuevo (ficticio)'"));
+        // Un cambio más viejo que el guardado no lo pisa; uno más nuevo, sí.
+        publicarInstitucion(institucion, UUID.randomUUID(), "Nombre viejo", "/00/05/05088", true, ahora.minusSeconds(60));
+        publicarInstitucion(institucion, UUID.randomUUID(), "Banco Renombrado (ficticio)", "/00/05/05088", false,
+                ahora.plusSeconds(1));
+        esperar(() -> existeFila("SELECT 1 FROM institucion_proyeccion WHERE institucion_id = '" + institucion
+                + "' AND nombre = 'Banco Renombrado (ficticio)' AND NOT vigente"));
+        assertThat(existeFila("SELECT 1 FROM institucion_proyeccion WHERE nombre = 'Nombre viejo'")).isFalse();
+    }
+
+    @Test
+    void el_coordinador_lee_su_territorio_con_la_proyeccion_local() throws Exception {
+        UUID medellin = UUID.randomUUID();
+        UUID bello = UUID.randomUUID();
+        UUID bogota = UUID.randomUUID();
+        proyectarInstitucion(medellin, "/00/05/05001");
+        proyectarInstitucion(bello, "/00/05/05088");
+        proyectarInstitucion(bogota, "/00/11/11001");
+        UUID unidadMedellin = insertarDonacion(medellin, Instant.now(), 1, 0).getFirst();
+        UUID unidadBello = insertarDonacion(bello, Instant.now(), 1, 0).getFirst();
+        UUID unidadBogota = insertarDonacion(bogota, Instant.now(), 1, 0).getFirst();
+        String coordinador = EntornoIntegracion.token(UUID.randomUUID().toString(), "coordinador", "territorio:/00/05");
+
+        JsonNode pagina = cuerpo(enviar(get("/v1/unidades?tamano=100"), coordinador, null, null), 200);
+        List<String> ids = new java.util.ArrayList<>();
+        pagina.path("elementos").forEach(u -> ids.add(u.path("id").asString()));
+        assertThat(ids).contains(unidadMedellin.toString(), unidadBello.toString()).doesNotContain(unidadBogota.toString());
+        cuerpo(enviar(get("/v1/unidades/" + unidadBello), coordinador, null, null), 200);
+        problema(enviar(get("/v1/unidades/" + unidadBogota), coordinador, null, null), 404, "no-encontrado");
+        problema(enviar(get("/v1/inventario?institucion_id=" + bogota), coordinador, null, null), 403,
+                "fuera-de-jurisdiccion");
+        cuerpo(enviar(get("/v1/alertas"), coordinador, null, null), 200);
+        // El coordinador consulta pero no opera ni configura (DD 15.5).
+        problema(enviar(put("/v1/inventario/umbrales"), coordinador, null, "{\"umbrales\":[]}"), 403,
+                "operacion-no-permitida");
+    }
+
+    @Test
+    void el_auditor_lee_la_trazabilidad_de_una_unidad_de_su_ambito() throws Exception {
+        UUID banco = UUID.randomUUID();
+        proyectarInstitucion(banco, "/00/76/76001");
+        UUID unidad = insertarDonacion(banco, Instant.now(), 1, 0).getFirst();
+        String auditor = EntornoIntegracion.token(UUID.randomUUID().toString(), "auditor", "territorio:/00");
+        cuerpo(enviar(get("/v1/unidades/" + unidad + "/eventos"), auditor, null, null), 200);
+        problema(enviar(post("/v1/unidades/" + unidad + "/ingreso-tamizaje"), auditor, "x", "{}"), 403,
+                "operacion-no-permitida");
+    }
+
+    @Test
+    void los_indicadores_salen_por_EV09_con_la_captacion_por_dia_y_las_existencias() throws Exception {
+        UUID banco = UUID.randomUUID();
+        Instant ayer = Instant.now().minus(Duration.ofDays(1));
+        for (int i = 0; i < 6; i++) {
+            insertarDonacion(banco, ayer, 2, i == 0 ? 1 : 0);
+        }
+        publicarIndicadores.ejecutar();
+        ConsumerRecord<String, String> evento = esperarMensaje(INDICADORES_ACTUALIZADOS, banco.toString());
+        assertThat(cabecera(evento, "evento-tipo")).isEqualTo("indicators.updated");
+        JsonNode carga = json.readTree(evento.value());
+        assertThat(carga.path("institucion_id").asString()).isEqualTo(banco.toString());
+        JsonNode dia = carga.path("captacion").get(0);
+        assertThat(dia.path("donaciones").asLong()).isEqualTo(6);
+        assertThat(dia.path("unidades_generadas").asLong()).isEqualTo(12);
+        assertThat(dia.path("unidades_no_aptas").asLong()).isEqualTo(1);
+        assertThat(carga.path("inventario")).isNotEmpty();
+        assertThat(evento.value()).as("solo conteos: ni unidades ni donantes").doesNotContain("unidad_id")
+                .doesNotContain("donante");
+        // Sin cambios, la misma fotografía no se vuelve a publicar.
+        assertThat(existeFila("SELECT 1 FROM indicador_publicado WHERE institucion_id = '" + banco + "'")).isTrue();
+    }
+
+    @Test
+    void cada_registro_de_la_bitacora_sale_por_EV10_con_la_estructura_comun() throws Exception {
+        UUID institucion = UUID.randomUUID();
+        String operador = EntornoIntegracion.token(UUID.randomUUID().toString(), "operador", "institucion:" + institucion);
+        String correlacion = UUID.randomUUID().toString();
+        // Un acceso denegado se audita en su propia transacción, y su evento con él.
+        mvc.perform(get("/v1/inventario?institucion_id=" + UUID.randomUUID())
+                .header("Authorization", "Bearer " + operador).header("X-Correlacion-Id", correlacion)).andReturn();
+        ConsumerRecord<String, String> evento = esperarMensaje(AUDITORIA_REGISTRADA, correlacion);
+        assertThat(cabecera(evento, "evento-tipo")).isEqualTo("audit.recorded");
+        JsonNode carga = json.readTree(evento.value());
+        assertThat(carga.path("operacion").asString()).isEqualTo("consultar_inventario");
+        assertThat(carga.path("resultado").asString()).isEqualTo("denegado");
+        assertThat(carga.path("correlacion_id").asString()).isEqualTo(correlacion);
+        assertThat(existeFila("SELECT 1 FROM registro_auditoria WHERE id = '" + carga.path("id").asString() + "'"))
+                .as("el evento lleva el mismo identificador que la fila").isTrue();
+    }
+
+    /**
+     * Una donación con sus unidades disponibles, escrita directamente: las
+     * pruebas de indicadores necesitan volumen, no el recorrido del operador.
+     * Las primeras {@code noAptas} unidades pasan por no_apta.
+     */
+    private static List<UUID> insertarDonacion(UUID institucion, Instant fecha, int unidades, int noAptas) throws Exception {
+        UUID donacion = UUID.randomUUID();
+        List<UUID> ids = new java.util.ArrayList<>();
+        String[] componentes = {"plasma", "globulos_rojos", "plaquetas"};
+        try (Connection c = EntornoIntegracion.superusuario()) {
+            c.createStatement().execute("INSERT INTO donacion (id, tipo_donacion_id, institucion_id, fecha_captacion, operador_id) "
+                    + "VALUES ('" + donacion + "', (SELECT id FROM tipo_donacion ORDER BY codigo LIMIT 1), '" + institucion
+                    + "', '" + fecha + "', gen_random_uuid())");
+            for (int i = 0; i < unidades; i++) {
+                UUID unidad = UUID.randomUUID();
+                boolean noApta = i < noAptas;
+                c.createStatement().execute("INSERT INTO unidad (id, donacion_id, componente_id, grupo_sanguineo_id, "
+                        + "institucion_custodia_id, estado_id, apta, fecha_vencimiento) VALUES ('" + unidad + "', '" + donacion
+                        + "', (SELECT id FROM componente WHERE codigo = '" + componentes[i] + "'), "
+                        + "(SELECT id FROM grupo_sanguineo WHERE codigo = 'O+'), '" + institucion + "', "
+                        + "(SELECT id FROM estado_unidad WHERE codigo = '" + (noApta ? "no_apta" : "disponible") + "'), "
+                        + !noApta + ", current_date + 30)");
+                c.createStatement().execute("INSERT INTO evento_unidad (id, unidad_id, estado_nuevo_id, actor_tipo, actor_id, "
+                        + "institucion_id, correlacion_id) VALUES (gen_random_uuid(), '" + unidad + "', "
+                        + "(SELECT id FROM estado_unidad WHERE codigo = '" + (noApta ? "no_apta" : "disponible") + "'), "
+                        + "'usuario', 'prueba', '" + institucion + "', 'indicadores')");
+                ids.add(unidad);
+            }
+        }
+        return ids;
+    }
+
     private JsonNode cuerpo(MvcResult resultado, int estado) throws Exception {
         String contenido = resultado.getResponse().getContentAsString(StandardCharsets.UTF_8);
         assertThat(resultado.getResponse().getStatus()).as(contenido).isEqualTo(estado);
@@ -557,20 +715,25 @@ class ServicioDonacionIntegracionTest {
         return buscar(unidades, "componente", componente).path("id").asString();
     }
 
+    /** Cuerpo del perfil: la cuenta ya existe en Identidad, así que no lleva correo de acceso ni contraseña. */
     private static String registroDonante(String documento, String correo, boolean autoriza) {
         return "{\"documento\":\"" + documento + "\",\"nombre\":\"Laura Pérez\",\"fecha_nacimiento\":\""
-                + LocalDate.now().minusYears(30) + "\",\"correo_acceso\":\"" + correo + "\","
-                + "\"credencial\":\"ClaveSegura2026\",\"correo\":null,\"telefono\":\"3001234567\","
-                + "\"municipio_ruta\":\"/00/05/05001\",\"autoriza_tratamiento_datos\":" + autoriza + ","
-                + "\"autoriza_avisos_campanas\":true,\"version_aviso\":\"AV-2026.1\"}";
+                + LocalDate.now().minusYears(30) + "\",\"correo\":" + (correo == null ? "null" : "\"" + correo + "\"")
+                + ",\"telefono\":\"3001234567\",\"municipio_ruta\":\"/00/05/05001\",\"autoriza_tratamiento_datos\":"
+                + autoriza + ",\"autoriza_avisos_campanas\":true,\"version_aviso\":\"AV-2026.1\"}";
     }
 
-    private static String registroConContacto(String documento, String correo, boolean avisos) {
-        return "{\"documento\":\"" + documento + "\",\"nombre\":\"Laura Pérez\",\"fecha_nacimiento\":\""
-                + LocalDate.now().minusYears(30) + "\",\"correo_acceso\":\"" + correo + "\","
-                + "\"credencial\":\"ClaveSegura2026\",\"correo\":\"" + correo + "\",\"telefono\":\"3001234567\","
-                + "\"municipio_ruta\":\"/00/05/05001\",\"autoriza_tratamiento_datos\":true,"
-                + "\"autoriza_avisos_campanas\":" + avisos + ",\"version_aviso\":\"AV-2026.1\"}";
+    /** Una institución en la proyección local, como la deja el consumidor de EV-07. */
+    private static void proyectarInstitucion(UUID id, String ruta) {
+        try (Connection c = EntornoIntegracion.superusuario()) {
+            c.createStatement().execute("INSERT INTO institucion_proyeccion (institucion_id, codigo, nombre, tipo, "
+                    + "territorio_codigo, territorio_ruta, vigente, cambiado_en, evento_id) VALUES ('" + id + "', 'P-"
+                    + id.toString().substring(0, 8) + "', 'Banco " + id.toString().substring(0, 8) + " (ficticio)', "
+                    + "'banco_de_sangre', '" + ruta.substring(ruta.lastIndexOf('/') + 1) + "', '" + ruta + "', true, now(), "
+                    + "gen_random_uuid())");
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
     }
 
     private static String documentoNuevo() {
@@ -622,6 +785,26 @@ class ServicioDonacionIntegracionTest {
             registro.headers().add("evento-tipo", "campaign.published".getBytes(StandardCharsets.UTF_8));
             registro.headers().add("correlacion-id", UUID.randomUUID().toString().getBytes(StandardCharsets.UTF_8));
             registro.headers().add("productor", "campanias".getBytes(StandardCharsets.UTF_8));
+            productor.send(registro).get();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static void publicarInstitucion(UUID id, UUID eventoId, String nombre, String ruta, boolean vigente,
+                                            Instant cambiadoEn) {
+        String carga = "{\"institucion_id\":\"" + id + "\",\"codigo\":\"QA-" + id.toString().substring(0, 8)
+                + "\",\"nombre\":\"" + nombre + "\",\"tipo\":\"banco_de_sangre\",\"territorio_codigo\":\""
+                + ruta.substring(ruta.lastIndexOf('/') + 1) + "\",\"territorio_ruta\":\"" + ruta + "\",\"vigente\":"
+                + vigente + ",\"cambiado_en\":\"" + cambiadoEn + "\"}";
+        try (var productor = new KafkaProducer<String, String>(Map.of(
+                ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, EntornoIntegracion.KAFKA.getBootstrapServers(),
+                ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class,
+                ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class))) {
+            var registro = new ProducerRecord<>(INSTITUCION_CAMBIADA, id.toString(), carga);
+            registro.headers().add("evento-id", eventoId.toString().getBytes(StandardCharsets.UTF_8));
+            registro.headers().add("evento-tipo", "institution.changed".getBytes(StandardCharsets.UTF_8));
+            registro.headers().add("productor", "institucional".getBytes(StandardCharsets.UTF_8));
             productor.send(registro).get();
         } catch (Exception e) {
             throw new IllegalStateException(e);

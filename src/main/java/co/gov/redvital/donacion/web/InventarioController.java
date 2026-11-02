@@ -18,7 +18,11 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-/** M4, inventario, umbrales y alertas de la institución propia (DD, Tabla 36). */
+/**
+ * M4, inventario, umbrales y alertas (DD, Tabla 36). El inventario lo leen también
+ * U5 y U6 en su territorio (grupo 7), y las alertas U5 (grupo 8); los umbrales son
+ * de la institución propia.
+ */
 @RestController
 class InventarioController {
 
@@ -40,7 +44,7 @@ class InventarioController {
     }
 
     @GetMapping("/v1/inventario")
-    @PreAuthorize("hasAnyRole('operador', 'admin_banco')")
+    @PreAuthorize("hasAnyRole('operador', 'admin_banco', 'coordinador', 'admin_nacional')")
     List<Vistas.ExistenciaVista> existencias(Actor actor,
                                              @RequestParam(name = "institucion_id", required = false) UUID institucion,
                                              @RequestParam(required = false) String componente,
@@ -68,7 +72,7 @@ class InventarioController {
     }
 
     @GetMapping("/v1/alertas")
-    @PreAuthorize("hasAnyRole('operador', 'admin_banco')")
+    @PreAuthorize("hasAnyRole('operador', 'admin_banco', 'coordinador')")
     List<Vistas.AlertaVista> alertas(Actor actor, @RequestParam(required = false) String estado) {
         return alertas.listar(actor, estado).stream().map(Vistas.AlertaVista::de).toList();
     }

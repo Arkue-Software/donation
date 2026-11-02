@@ -25,13 +25,16 @@ public final class GestionarUmbrales {
     private final Auditor auditor;
     private final Clock reloj;
 
+    private final ReevaluadorAlertas alertas;
+
     public GestionarUmbrales(RepositorioUmbrales umbrales, CatalogoPort catalogo, UnidadDeTrabajo unidadDeTrabajo,
-                             Auditor auditor, Clock reloj) {
+                             Auditor auditor, Clock reloj, ReevaluadorAlertas alertas) {
         this.umbrales = umbrales;
         this.catalogo = catalogo;
         this.unidadDeTrabajo = unidadDeTrabajo;
         this.auditor = auditor;
         this.reloj = reloj;
+        this.alertas = alertas;
     }
 
     public List<Umbral> listar(Actor actor) {
@@ -59,7 +62,7 @@ public final class GestionarUmbrales {
                 throw new DatosInvalidos("Cada combinación de componente y grupo se envía una sola vez.");
             }
         }
-        return unidadDeTrabajo.ejecutar(() -> {
+        List<Umbral> guardados = unidadDeTrabajo.ejecutar(() -> {
             Instant ahora = reloj.instant();
             var usuario = actor.cuentaId();
             for (Comando c : comandos) {
@@ -69,5 +72,8 @@ public final class GestionarUmbrales {
             auditor.permitido(actor, "configurar_umbrales", "umbral_inventario", null, ctx);
             return umbrales.deInstitucion(institucion);
         });
+        // Los umbrales nuevos se aplican enseguida a las alertas del banco.
+        alertas.reevaluar(institucion);
+        return guardados;
     }
 }

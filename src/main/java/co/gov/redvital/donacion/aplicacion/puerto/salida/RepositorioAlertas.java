@@ -6,11 +6,12 @@ import co.gov.redvital.donacion.dominio.modelo.TipoAlerta;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 
 public interface RepositorioAlertas {
 
-    List<Alerta> deInstitucion(UUID institucionId, EstadoAlerta estado);
+    List<Alerta> deInstituciones(Set<UUID> instituciones, EstadoAlerta estado);
 
     Optional<Alerta> buscarParaActualizar(UUID id);
 
