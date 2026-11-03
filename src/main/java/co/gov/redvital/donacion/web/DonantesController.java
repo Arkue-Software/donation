@@ -37,8 +37,6 @@ class DonantesController {
             @NotNull @JsonProperty(access = JsonProperty.Access.WRITE_ONLY) String documento,
             @NotNull String nombre,
             @NotNull LocalDate fechaNacimiento,
-            @NotNull String correoAcceso,
-            @NotNull @JsonProperty(access = JsonProperty.Access.WRITE_ONLY) String credencial,
             String correo,
             String telefono,
             String municipioRuta,
@@ -94,11 +92,16 @@ class DonantesController {
         this.buscar = buscar;
     }
 
+    /**
+     * Perfil del donante, segundo paso de «Crear cuenta»: la persona ya creó su
+     * cuenta en Identidad e inició sesión; el perfil queda enlazado a su token.
+     */
     @PostMapping
-    ResponseEntity<RegistroRespuesta> registrar(@RequestHeader(ClaveIdempotencia.CABECERA) String clave,
+    @PreAuthorize("hasRole('donante')")
+    ResponseEntity<RegistroRespuesta> registrar(Actor actor, @RequestHeader(ClaveIdempotencia.CABECERA) String clave,
                                                 @Valid @RequestBody RegistroPeticion p, ContextoPeticion ctx) {
-        var resultado = registrar.ejecutar(new RegistrarDonante.Comando(p.documento(), p.nombre(),
-                p.fechaNacimiento(), p.correoAcceso(), p.credencial(), p.correo(), p.telefono(), p.municipioRuta(),
+        var resultado = registrar.ejecutar(actor, new RegistrarDonante.Comando(p.documento(), p.nombre(),
+                p.fechaNacimiento(), p.correo(), p.telefono(), p.municipioRuta(),
                 p.autorizaTratamientoDatos(), p.autorizaAvisosCampanas(), p.versionAviso()),
                 ClaveIdempotencia.validar(clave), ctx).valor();
         return ResponseEntity.status(HttpStatus.CREATED).body(new RegistroRespuesta(resultado.donanteId(),

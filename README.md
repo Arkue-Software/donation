@@ -12,7 +12,7 @@ Hexagonal. La regla de dependencias la hace cumplir `ArquitecturaTest` (ArchUnit
 |---|---|
 | `dominio` | Modelo y reglas puras: máquina de 9 estados y 13 transiciones, elegibilidad, vencimiento, campaña, confirmación. Sin Spring, sin Jackson, sin JDBC |
 | `aplicacion` | Un caso de uso por clase y los puertos de salida que necesitan. Sin dependencias de marcos |
-| `infraestructura` | Adaptadores: JDBC (`JdbcClient`), Kafka (bandeja de salida y consumidor), cliente de Identidad, seguridad JWT, procesos programados y la composición del núcleo |
+| `infraestructura` | Adaptadores: JDBC (`JdbcClient`), Kafka (bandeja de salida y consumidores), seguridad JWT, procesos programados y la composición del núcleo |
 | `web` | Controladores REST en snake_case y problemas RFC 9457 `{tipo, titulo, estado, detalle, correlacion_id}` |
 
 Decisiones relevantes:
@@ -20,14 +20,26 @@ Decisiones relevantes:
 - **El esquema no lo migra el servicio.** Vive en `BDs_RedVital/databases/donacion` y lo aplica Flyway como
   `donacion_propietario`. El servicio se conecta como `donacion_servicio`, que solo puede actualizar las columnas
   que el dominio cambia.
-- **Donación nunca llama a Campañas.** La campaña de una donación se confirma con la proyección local
-  `campania_publicada`, que alimenta el evento `redvital.campanias.campaign-published.v1`. El registro de la
-  donación publica `redvital.donacion.donation-completed.v1` por la bandeja de salida transaccional. Contratos en
+- **Donación no llama a ningún servicio ni recibe llamadas de ellos: todo pasa por Kafka.** Contratos en
   [`contratos/asyncapi.yaml`](contratos/asyncapi.yaml).
-- **La única consulta síncrona es a Identidad**, para crear la cuenta del donante (`POST /v1/donantes`).
-- **Alcance de esta versión:** donante (U2), operador (U3) y administrador de banco (U4). Coordinador territorial,
-  administrador nacional y auditor reciben 403 hasta que exista el Servicio Institucional, que resuelve qué
-  instituciones hay en cada territorio. Transferencias y convocatorias quedan diferidas por la misma razón.
+  - Publica, por la bandeja de salida transaccional: EV-01 `donation-completed`, EV-02 `notice-requested` (con el
+    correo y el nombre del destinatario, para que Notificaciones no tenga que preguntar), EV-09 `indicators-updated`
+    (la fotografía de M7 de cada institución, cada minuto si cambió) y EV-10 `audit-recorded` (cada registro de su
+    serie de auditoría, para la bitácora de Institucional).
+  - Consume EV-03 `campaign-published`, con el que confirma la campaña de una donación (`campania_publicada`), y
+    EV-07 `institution-changed`, con el que mantiene su copia de las instituciones (`institucion_proyeccion`): el
+    alcance territorial de U5 y U6 y el nombre del banco en el historial del donante.
+- **El token se valida con la llave pública de Identidad**, montada como secreto (`identidad_llave_publica`); no se
+  consulta el JWKS en tiempo de ejecución.
+- **Perfil de donante** (`POST /v1/donantes`): lo crea la persona con la sesión de la cuenta que acaba de abrir en
+  Identidad (`POST /v1/cuentas-donante`). Exige 18 años cumplidos (422 `menor-de-edad`) y una cuenta sin perfil.
+- **Alertas al instante:** registrar, tamizar, distribuir o desechar una unidad, y guardar los umbrales, reevalúan
+  en la misma operación las alertas de esa institución; el proceso programado de cada cinco minutos recoge los
+  vencimientos.
+- **Alcance por rol** (DD 15.5): el operador y el administrador de banco ven su institución; el coordinador y el
+  administrador nacional leen donaciones, unidades e inventario de su territorio, y el coordinador también las
+  alertas; el auditor lee la trazabilidad de una unidad. Solo el operador opera unidades. Transferencias y
+  convocatorias quedan diferidas.
 
 ## Configuración
 
@@ -35,13 +47,12 @@ Decisiones relevantes:
 |---|---|---|
 | `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_SSLMODE` | PostgreSQL | `localhost`, `5432`, `db_donacion`, `prefer` |
 | `KAFKA_SERVIDORES`, `KAFKA_PROTOCOLO` | Broker | `localhost:9092`, `SASL_PLAINTEXT` |
-| `JWT_JWKS_URI`, `JWT_EMISOR`, `JWT_AUDIENCIA` | Validación del token | JWKS de `identity-service` |
-| `IDENTIDAD_URL` | Operaciones internas de Identidad | `http://identity-service:8080` |
+| `JWT_LLAVE_PUBLICA`, `JWT_EMISOR`, `JWT_AUDIENCIA` | Validación del token | `/run/secrets/identidad_llave_publica` |
 | `PROCESOS_HABILITADOS`, `AVISOS_HABILITADOS` | Procesos programados y avisos de campaña | `true` |
 
 Secretos, como archivos en `/run/secrets` (cada archivo se lee como la propiedad de su mismo nombre):
-`donacion_servicio` (contraseña de la base), `kafka_donacion` (SCRAM), `donacion_secreto_identidad` (credencial de
-servicio ante Identidad) y `donacion_clave_hmac` (clave del resumen del documento; estable y respaldada).
+`donacion_servicio` (contraseña de la base), `kafka_donacion` (SCRAM), `identidad_llave_publica` (llave pública de
+firma de Identidad) y `donacion_clave_hmac` (clave del resumen del documento; estable y respaldada).
 
 Puertos: 8080 API, 8081 gestión (`/actuator/health`, `/actuator/prometheus`).
 

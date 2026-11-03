@@ -60,7 +60,7 @@ class DonacionesController {
     }
 
     @GetMapping("/{id}")
-    @PreAuthorize("hasAnyRole('operador', 'admin_banco')")
+    @PreAuthorize("hasAnyRole('operador', 'admin_banco', 'coordinador', 'admin_nacional')")
     Vistas.DonacionVista consultar(Actor actor, @PathVariable UUID id) {
         return Vistas.DonacionVista.de(consultas.consultar(actor, id));
     }

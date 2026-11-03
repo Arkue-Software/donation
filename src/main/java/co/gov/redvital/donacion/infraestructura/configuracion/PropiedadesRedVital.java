@@ -1,6 +1,5 @@
 package co.gov.redvital.donacion.infraestructura.configuracion;
 
-import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.boot.context.properties.bind.DefaultValue;
 
@@ -12,18 +11,15 @@ import org.springframework.boot.context.properties.bind.DefaultValue;
 public record PropiedadesRedVital(
         @DefaultValue("America/Bogota") String zonaHoraria,
         Jwt jwt,
-        Identidad identidad,
         Documento documento,
         @DefaultValue Avisos avisos,
         @DefaultValue Procesos procesos) {
 
-    /** Validación del token de Identidad. Emisor y audiencia son los que Identidad firma hoy. */
-    public record Jwt(String emisor, String audiencia, String jwksUri) {
-    }
-
-    /** Llamada interna a Identidad para crear la cuenta del donante. */
-    public record Identidad(String url, @DefaultValue("donacion") String cliente, String secreto,
-                            @DefaultValue("3s") Duration plazo) {
+    /**
+     * Validación del token de Identidad. La llave pública llega como archivo
+     * (secreto del despliegue): el servicio no se la pide a Identidad.
+     */
+    public record Jwt(String emisor, String audiencia, String llavePublica) {
     }
 
     /** Clave del HMAC del documento. Rotarla deja huérfanos los resúmenes existentes. */

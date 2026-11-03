@@ -1,6 +1,9 @@
 package co.gov.redvital.donacion.aplicacion.casodeuso;
 
 import co.gov.redvital.donacion.aplicacion.puerto.salida.CatalogoPort;
+import co.gov.redvital.donacion.aplicacion.puerto.salida.InstitucionesPort;
+import co.gov.redvital.donacion.aplicacion.puerto.salida.ProyeccionCampaniasPort;
+import co.gov.redvital.donacion.dominio.modelo.CampaniaPublicada;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.RepositorioDonaciones;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.RepositorioDonantes;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.RepositorioReconocimientos;
@@ -31,8 +34,8 @@ public final class ConsultasDelDonante {
                          String grupoSanguineo, LocalDate fechaUltimaDonacion, int totalDonaciones) {
     }
 
-    public record DonacionPropia(UUID id, Instant fechaCaptacion, UUID institucionId, UUID campaniaId,
-                                 String mensaje) {
+    public record DonacionPropia(UUID id, Instant fechaCaptacion, UUID institucionId, String institucionNombre,
+                                 UUID campaniaId, String campaniaNombre, String mensaje) {
     }
 
     public record ReconocimientoPropio(String codigo, String nombre, String descripcion,
@@ -44,11 +47,16 @@ public final class ConsultasDelDonante {
     private final RepositorioReconocimientos reconocimientos;
     private final CatalogoPort catalogo;
     private final PoliticaElegibilidad politica;
+    private final InstitucionesPort instituciones;
+    private final ProyeccionCampaniasPort campanias;
     private final Clock reloj;
 
     public ConsultasDelDonante(RepositorioDonantes donantes, RepositorioDonaciones donaciones,
                                RepositorioReconocimientos reconocimientos, CatalogoPort catalogo,
-                               PoliticaElegibilidad politica, Clock reloj) {
+                               PoliticaElegibilidad politica, InstitucionesPort instituciones,
+                               ProyeccionCampaniasPort campanias, Clock reloj) {
+        this.instituciones = instituciones;
+        this.campanias = campanias;
         this.donantes = donantes;
         this.donaciones = donaciones;
         this.reconocimientos = reconocimientos;
@@ -73,7 +81,11 @@ public final class ConsultasDelDonante {
         Donante d = donante(actor);
         return donaciones.deDonante(d.id()).stream()
                 .sorted(Comparator.comparing(co.gov.redvital.donacion.dominio.modelo.Donacion::fechaCaptacion).reversed())
-                .map(x -> new DonacionPropia(x.id(), x.fechaCaptacion(), x.institucionId(), x.campaniaId(), MENSAJE_DONACION))
+                .map(x -> new DonacionPropia(x.id(), x.fechaCaptacion(), x.institucionId(),
+                        instituciones.nombre(x.institucionId()).orElse(null), x.campaniaId(),
+                        x.campaniaId() == null ? null
+                                : campanias.buscar(x.campaniaId()).map(CampaniaPublicada::nombre).orElse(null),
+                        MENSAJE_DONACION))
                 .toList();
     }
 

@@ -12,6 +12,12 @@ public final class Temas {
     public static final String AVISO_SOLICITADO = "redvital.donacion.notice-requested.v1";
     /** EV-03, productor: Campañas; Donación lo consume. */
     public static final String CAMPANIA_PUBLICADA = "redvital.campanias.campaign-published.v1";
+    /** EV-07, productor: Institucional; Donación y Campañas lo consumen. */
+    public static final String INSTITUCION_CAMBIADA = "redvital.institucional.institution-changed.v1";
+    /** EV-09, productor: Donación; Institucional lo consume para M7. */
+    public static final String INDICADORES_ACTUALIZADOS = "redvital.donacion.indicators-updated.v1";
+    /** EV-10, productor: Donación; Institucional lo consume para la bitácora. */
+    public static final String AUDITORIA_REGISTRADA = "redvital.donacion.audit-recorded.v1";
 
     /** Grupo consumidor de Donación (DD, sección 14). */
     public static final String GRUPO_DONACION = "donacion";

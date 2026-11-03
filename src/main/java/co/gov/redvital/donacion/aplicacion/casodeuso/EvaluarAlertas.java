@@ -24,12 +24,17 @@ import java.util.Set;
 import java.util.UUID;
 
 /**
- * Proceso programado de RF-19 y RF-20. Abre una alerta de escasez cuando las
+ * RF-19 y RF-20. Abre una alerta de escasez cuando las
  * existencias bajan del umbral y la cierra como caducada cuando lo superan de
  * nuevo; abre una alerta de vencimiento próximo por unidad disponible que entra
  * en la ventana del umbral, y la cierra cuando la unidad deja de estarlo.
+ *
+ * Corre para una institución en cuanto una operación cambia sus existencias o
+ * sus umbrales, y para todas cada cinco minutos, que recoge lo que cambia con
+ * el tiempo (vencimientos) y lo que no alcanzó a evaluarse. Las dos formas
+ * comparten el bloqueo consultivo: nunca corren a la vez.
  */
-public final class EvaluarAlertas {
+public final class EvaluarAlertas implements ReevaluadorAlertas {
 
     public static final long CLAVE_BLOQUEO = 0x52564141L; // "RVAA"
 
@@ -60,12 +65,30 @@ public final class EvaluarAlertas {
             if (!bloqueo.intentar(CLAVE_BLOQUEO)) {
                 return;
             }
-            Instant ahora = reloj.instant();
-            LocalDate hoy = ahora.atZone(zona).toLocalDate();
-            List<Umbral> todos = umbrales.todos();
-            evaluarEscasez(todos, ahora, hoy);
-            evaluarVencimientos(todos, ahora, hoy);
+            evaluar(umbrales.todos(), null);
         });
+    }
+
+    /**
+     * Solo las alertas de una institución. Si el proceso programado está
+     * evaluando en ese momento, no espera: ese ciclo la incluye.
+     */
+    @Override
+    public void reevaluar(UUID institucion) {
+        unidadDeTrabajo.ejecutar(() -> {
+            if (!bloqueo.intentar(CLAVE_BLOQUEO)) {
+                return;
+            }
+            evaluar(umbrales.todos().stream().filter(u -> u.institucionId().equals(institucion)).toList(), institucion);
+        });
+    }
+
+    /** @param institucion la única evaluada, o nula para todas */
+    private void evaluar(List<Umbral> aplicables, UUID institucion) {
+        Instant ahora = reloj.instant();
+        LocalDate hoy = ahora.atZone(zona).toLocalDate();
+        evaluarEscasez(aplicables, ahora, hoy);
+        evaluarVencimientos(aplicables, institucion, ahora, hoy);
     }
 
     private void evaluarEscasez(List<Umbral> todos, Instant ahora, LocalDate hoy) {
@@ -87,7 +110,7 @@ public final class EvaluarAlertas {
         }
     }
 
-    private void evaluarVencimientos(List<Umbral> todos, Instant ahora, LocalDate hoy) {
+    private void evaluarVencimientos(List<Umbral> todos, UUID soloInstitucion, Instant ahora, LocalDate hoy) {
         Set<UUID> enVentana = new HashSet<>();
         Set<UUID> instituciones = new HashSet<>();
         todos.forEach(u -> instituciones.add(u.institucionId()));
@@ -107,6 +130,9 @@ public final class EvaluarAlertas {
             }
         }
         for (Alerta a : alertas.abiertas(TipoAlerta.VENCIMIENTO_PROXIMO)) {
+            if (soloInstitucion != null && !soloInstitucion.equals(a.institucionId())) {
+                continue;
+            }
             if (!enVentana.contains(a.unidadId())) {
                 alertas.cerrar(a.id(), EstadoAlerta.CADUCADA, ahora, null);
             }

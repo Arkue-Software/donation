@@ -2,9 +2,9 @@ package co.gov.redvital.donacion.infraestructura.configuracion;
 
 import co.gov.redvital.donacion.aplicacion.casodeuso.ActualizarPerfilDonante;
 import co.gov.redvital.donacion.aplicacion.casodeuso.AplicarCampaniaPublicada;
+import co.gov.redvital.donacion.aplicacion.casodeuso.AplicarInstitucionCambiada;
 import co.gov.redvital.donacion.aplicacion.casodeuso.BuscarDonantePresente;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ConfirmarFraccionamiento;
-import co.gov.redvital.donacion.aplicacion.casodeuso.ConsultarContactoDonante;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ConsultarIntencion;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ConsultarInventario;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ConsultasDeDonaciones;
@@ -18,21 +18,26 @@ import co.gov.redvital.donacion.aplicacion.casodeuso.GestionarUmbrales;
 import co.gov.redvital.donacion.aplicacion.casodeuso.OperarUnidad;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ProcesarVencimientos;
 import co.gov.redvital.donacion.aplicacion.casodeuso.PublicarBandeja;
+import co.gov.redvital.donacion.aplicacion.casodeuso.PublicarIndicadores;
 import co.gov.redvital.donacion.aplicacion.casodeuso.RegistrarDonacion;
 import co.gov.redvital.donacion.aplicacion.casodeuso.RegistrarDonante;
 import co.gov.redvital.donacion.aplicacion.casodeuso.RegistrarIntencion;
 import co.gov.redvital.donacion.aplicacion.comun.Auditor;
 import co.gov.redvital.donacion.aplicacion.comun.EjecutorIdempotente;
+import co.gov.redvital.donacion.aplicacion.comun.ResolutorAlcance;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.AuditoriaPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.BandejaSalidaPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.BloqueoConsultivoPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.CatalogoPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.ConsultaInventarioPort;
-import co.gov.redvital.donacion.aplicacion.puerto.salida.CuentasIdentidadPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.EventosProcesadosPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.HuellaPeticion;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.IdempotenciaPort;
+import co.gov.redvital.donacion.aplicacion.puerto.salida.IndicadoresPort;
+import co.gov.redvital.donacion.aplicacion.puerto.salida.InstitucionesPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.ProyeccionCampaniasPort;
+import co.gov.redvital.donacion.aplicacion.puerto.salida.ProyeccionInstitucionesPort;
+import co.gov.redvital.donacion.aplicacion.puerto.salida.PublicacionIndicadoresPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.PublicadorMensajesPort;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.RepositorioAlertas;
 import co.gov.redvital.donacion.aplicacion.puerto.salida.RepositorioConsentimientos;
@@ -80,8 +85,8 @@ class CasosDeUsoConfig {
     }
 
     @Bean
-    Auditor auditor(AuditoriaPort auditoria, UnidadDeTrabajo unidadDeTrabajo, Clock reloj) {
-        return new Auditor(auditoria, unidadDeTrabajo, reloj);
+    Auditor auditor(AuditoriaPort auditoria, BandejaSalidaPort bandeja, UnidadDeTrabajo unidadDeTrabajo, Clock reloj) {
+        return new Auditor(auditoria, bandeja, unidadDeTrabajo, reloj);
     }
 
     @Bean
@@ -104,25 +109,21 @@ class CasosDeUsoConfig {
 
     @Bean
     RegistrarDonante registrarDonante(RepositorioDonantes donantes, RepositorioConsentimientos consentimientos,
-                                      CuentasIdentidadPort cuentas, ResumidorDocumento resumidor,
-                                      IdempotenciaPort idempotencia, HuellaPeticion huellas,
-                                      UnidadDeTrabajo unidadDeTrabajo, Auditor auditor, BandejaSalidaPort bandeja,
-                                      PropiedadesRedVital propiedades, Clock reloj) {
-        return new RegistrarDonante(donantes, consentimientos, cuentas, resumidor, idempotencia, huellas,
-                unidadDeTrabajo, auditor, bandeja, propiedades.avisos().habilitados(), reloj);
-    }
-
-    @Bean
-    ConsultarContactoDonante consultarContactoDonante(RepositorioDonantes donantes,
-                                                      RepositorioConsentimientos consentimientos) {
-        return new ConsultarContactoDonante(donantes, consentimientos);
+                                      ResumidorDocumento resumidor, IdempotenciaPort idempotencia,
+                                      HuellaPeticion huellas, UnidadDeTrabajo unidadDeTrabajo, Auditor auditor,
+                                      BandejaSalidaPort bandeja, PropiedadesRedVital propiedades, ZoneId zona,
+                                      Clock reloj) {
+        return new RegistrarDonante(donantes, consentimientos, resumidor, idempotencia, huellas, unidadDeTrabajo,
+                auditor, bandeja, propiedades.avisos().habilitados(), zona, reloj);
     }
 
     @Bean
     ConsultasDelDonante consultasDelDonante(RepositorioDonantes donantes, RepositorioDonaciones donaciones,
                                             RepositorioReconocimientos reconocimientos, CatalogoPort catalogo,
-                                            PoliticaElegibilidad politica, ZoneId zona, Clock reloj) {
-        return new ConsultasDelDonante(donantes, donaciones, reconocimientos, catalogo, politica, reloj.withZone(zona));
+                                            PoliticaElegibilidad politica, InstitucionesPort instituciones,
+                                            ProyeccionCampaniasPort campanias, ZoneId zona, Clock reloj) {
+        return new ConsultasDelDonante(donantes, donaciones, reconocimientos, catalogo, politica, instituciones,
+                campanias, reloj.withZone(zona));
     }
 
     @Bean
@@ -146,8 +147,14 @@ class CasosDeUsoConfig {
     }
 
     @Bean
-    ConsultasDeDonaciones consultasDeDonaciones(RepositorioDonaciones donaciones, RepositorioUnidades unidades) {
-        return new ConsultasDeDonaciones(donaciones, unidades);
+    ResolutorAlcance resolutorAlcance(InstitucionesPort instituciones) {
+        return new ResolutorAlcance(instituciones);
+    }
+
+    @Bean
+    ConsultasDeDonaciones consultasDeDonaciones(RepositorioDonaciones donaciones, RepositorioUnidades unidades,
+                                                ResolutorAlcance alcance) {
+        return new ConsultasDeDonaciones(donaciones, unidades, alcance);
     }
 
     @Bean
@@ -174,34 +181,51 @@ class CasosDeUsoConfig {
 
     @Bean
     ConsultasDeUnidades consultasDeUnidades(RepositorioUnidades unidades, RepositorioEventosUnidad eventos,
-                                            CatalogoPort catalogo) {
-        return new ConsultasDeUnidades(unidades, eventos, catalogo);
+                                            CatalogoPort catalogo, ResolutorAlcance alcance) {
+        return new ConsultasDeUnidades(unidades, eventos, catalogo, alcance);
     }
 
     @Bean
     OperarUnidad operarUnidad(RepositorioUnidades unidades, RepositorioEventosUnidad eventos, CatalogoPort catalogo,
                               UnidadDeTrabajo unidadDeTrabajo, EjecutorIdempotente idempotente, Auditor auditor,
-                              ZoneId zona, Clock reloj) {
+                              ZoneId zona, Clock reloj, EvaluarAlertas alertas) {
         return new OperarUnidad(unidades, eventos, catalogo, unidadDeTrabajo, idempotente, new ReglaConfirmacion(),
-                auditor, zona, reloj);
+                auditor, zona, reloj, alertas);
     }
 
     @Bean
     ConsultarInventario consultarInventario(ConsultaInventarioPort inventario, CatalogoPort catalogo, Auditor auditor,
+                                            ZoneId zona, Clock reloj, ResolutorAlcance alcance) {
+        return new ConsultarInventario(inventario, catalogo, auditor, zona, reloj, alcance);
+    }
+
+    @Bean
+    PublicarIndicadores publicarIndicadores(IndicadoresPort indicadores, PublicacionIndicadoresPort publicaciones,
+                                            HuellaPeticion huellas, BandejaSalidaPort bandeja,
+                                            BloqueoConsultivoPort bloqueo, UnidadDeTrabajo unidadDeTrabajo,
                                             ZoneId zona, Clock reloj) {
-        return new ConsultarInventario(inventario, catalogo, auditor, zona, reloj);
+        return new PublicarIndicadores(indicadores, publicaciones, huellas, bandeja, bloqueo, unidadDeTrabajo, zona,
+                reloj);
+    }
+
+    @Bean
+    AplicarInstitucionCambiada aplicarInstitucionCambiada(EventosProcesadosPort procesados,
+                                                          ProyeccionInstitucionesPort proyeccion,
+                                                          UnidadDeTrabajo unidadDeTrabajo, Clock reloj) {
+        return new AplicarInstitucionCambiada(procesados, proyeccion, unidadDeTrabajo, reloj);
     }
 
     @Bean
     GestionarUmbrales gestionarUmbrales(RepositorioUmbrales umbrales, CatalogoPort catalogo,
-                                        UnidadDeTrabajo unidadDeTrabajo, Auditor auditor, Clock reloj) {
-        return new GestionarUmbrales(umbrales, catalogo, unidadDeTrabajo, auditor, reloj);
+                                        UnidadDeTrabajo unidadDeTrabajo, Auditor auditor, Clock reloj,
+                                        EvaluarAlertas alertas) {
+        return new GestionarUmbrales(umbrales, catalogo, unidadDeTrabajo, auditor, reloj, alertas);
     }
 
     @Bean
     GestionarAlertas gestionarAlertas(RepositorioAlertas alertas, UnidadDeTrabajo unidadDeTrabajo, Auditor auditor,
-                                      Clock reloj) {
-        return new GestionarAlertas(alertas, unidadDeTrabajo, auditor, reloj);
+                                      Clock reloj, ResolutorAlcance alcance) {
+        return new GestionarAlertas(alertas, unidadDeTrabajo, auditor, reloj, alcance);
     }
 
     @Bean

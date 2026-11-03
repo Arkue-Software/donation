@@ -8,6 +8,7 @@ import java.util.UUID;
  * acción y con qué resultado, nunca el dato al que se intentó acceder.
  */
 public record RegistroAuditoria(
+        UUID id,
         String actorTipo,
         String actorId,
         String rol,

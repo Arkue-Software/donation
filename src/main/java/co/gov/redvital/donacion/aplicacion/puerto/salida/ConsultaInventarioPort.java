@@ -3,6 +3,7 @@ package co.gov.redvital.donacion.aplicacion.puerto.salida;
 import co.gov.redvital.donacion.dominio.modelo.Existencia;
 import java.time.LocalDate;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 /**
@@ -11,7 +12,8 @@ import java.util.UUID;
  */
 public interface ConsultaInventarioPort {
 
-    List<Existencia> existencias(UUID institucionId, String componente, String grupoSanguineo, LocalDate hoy);
+    /** Existencias de cada institución del conjunto; un conjunto vacío no devuelve nada. */
+    List<Existencia> existencias(Set<UUID> instituciones, String componente, String grupoSanguineo, LocalDate hoy);
 
     /** Grupo nulo significa todos los grupos. */
     long disponibles(UUID institucionId, String componente, String grupoSanguineo, LocalDate hoy);

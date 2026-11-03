@@ -66,6 +66,20 @@ final class EntornoIntegracion {
         return (RSAPublicKey) LLAVES.getPublic();
     }
 
+    /** La llave pública en un archivo PEM, como la monta el despliegue en /run/secrets. */
+    static String archivoLlavePublica() {
+        try {
+            Path archivo = Files.createTempFile("identidad_llave_publica", ".pem");
+            String pem = "-----BEGIN PUBLIC KEY-----\n"
+                    + java.util.Base64.getMimeEncoder(64, "\n".getBytes()).encodeToString(LLAVES.getPublic().getEncoded())
+                    + "\n-----END PUBLIC KEY-----\n";
+            Files.writeString(archivo, pem);
+            return archivo.toString();
+        } catch (Exception e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
     /** Conexión como superusuario, solo para preparar datos que el servicio no puede escribir. */
     static Connection superusuario() throws Exception {
         return DriverManager.getConnection(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword());
@@ -126,7 +140,14 @@ final class EntornoIntegracion {
                     new NewTopic("redvital.campanias.campaign-published.v1.donacion.retry-0", 3, (short) 1),
                     new NewTopic("redvital.campanias.campaign-published.v1.donacion.retry-1", 3, (short) 1),
                     new NewTopic("redvital.campanias.campaign-published.v1.donacion.retry-2", 3, (short) 1),
-                    new NewTopic("redvital.campanias.campaign-published.v1.donacion.dlt", 1, (short) 1)))
+                    new NewTopic("redvital.campanias.campaign-published.v1.donacion.dlt", 1, (short) 1),
+                    new NewTopic("redvital.institucional.institution-changed.v1", 3, (short) 1),
+                    new NewTopic("redvital.institucional.institution-changed.v1.donacion.retry-0", 3, (short) 1),
+                    new NewTopic("redvital.institucional.institution-changed.v1.donacion.retry-1", 3, (short) 1),
+                    new NewTopic("redvital.institucional.institution-changed.v1.donacion.retry-2", 3, (short) 1),
+                    new NewTopic("redvital.institucional.institution-changed.v1.donacion.dlt", 1, (short) 1),
+                    new NewTopic("redvital.donacion.indicators-updated.v1", 3, (short) 1),
+                    new NewTopic("redvital.donacion.audit-recorded.v1", 3, (short) 1)))
                     .all().get();
         } catch (Exception e) {
             throw new IllegalStateException("No fue posible crear los temas de prueba", e);

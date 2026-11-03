@@ -33,6 +33,8 @@ import java.util.function.Consumer;
  */
 public final class OperarUnidad {
 
+    private static final System.Logger LOG = System.getLogger(OperarUnidad.class.getName());
+
     public record Resultado(UUID unidadId, UUID eventoId, CodigoEstado estadoAnterior, CodigoEstado estadoNuevo,
                             Instant ocurridoEn) {
 
@@ -50,10 +52,12 @@ public final class OperarUnidad {
     private final Auditor auditor;
     private final ZoneId zona;
     private final Clock reloj;
+    private final ReevaluadorAlertas alertas;
 
     public OperarUnidad(RepositorioUnidades unidades, RepositorioEventosUnidad eventos, CatalogoPort catalogo,
                         UnidadDeTrabajo unidadDeTrabajo, EjecutorIdempotente idempotente,
-                        ReglaConfirmacion confirmacion, Auditor auditor, ZoneId zona, Clock reloj) {
+                        ReglaConfirmacion confirmacion, Auditor auditor, ZoneId zona, Clock reloj,
+                        ReevaluadorAlertas alertas) {
         this.unidades = unidades;
         this.eventos = eventos;
         this.catalogo = catalogo;
@@ -63,6 +67,7 @@ public final class OperarUnidad {
         this.auditor = auditor;
         this.zona = zona;
         this.reloj = reloj;
+        this.alertas = alertas;
     }
 
     /** Transición 2. */
@@ -116,11 +121,22 @@ public final class OperarUnidad {
                 unidadDeTrabajo.ejecutar(() -> aplicar(actor, id, destino, observacion, operacion, ctx, precondicion)));
     }
 
-    /** El intento rechazado por la matriz se registra en su propia transacción, y se relanza. */
+    /**
+     * El intento rechazado por la matriz se registra en su propia transacción, y
+     * se relanza. Un cambio aplicado reevalúa enseguida las alertas del banco,
+     * después de confirmar la transición: si la reevaluación falla, la
+     * operación ya quedó hecha y el proceso programado la recoge.
+     */
     private <T> T conAuditoriaDeRechazo(Actor actor, UUID id, String operacion, ContextoPeticion ctx,
                                         java.util.function.Supplier<T> trabajo) {
         try {
-            return trabajo.get();
+            T resultado = trabajo.get();
+            try {
+                alertas.reevaluar(actor.institucion());
+            } catch (RuntimeException e) {
+                LOG.log(System.Logger.Level.WARNING, "No se reevaluaron las alertas tras " + operacion + ": " + e.getMessage());
+            }
+            return resultado;
         } catch (TransicionNoPermitida e) {
             auditor.denegado(actor, operacion, "unidad", id, null, ctx);
             throw e;

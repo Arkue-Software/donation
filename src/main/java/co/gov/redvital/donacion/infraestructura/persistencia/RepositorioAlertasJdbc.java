@@ -9,6 +9,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -31,13 +32,16 @@ class RepositorioAlertasJdbc implements RepositorioAlertas {
     }
 
     @Override
-    public List<Alerta> deInstitucion(UUID institucionId, EstadoAlerta estado) {
+    public List<Alerta> deInstituciones(Set<UUID> instituciones, EstadoAlerta estado) {
+        if (instituciones.isEmpty()) {
+            return List.of();
+        }
         return jdbc.sql(SELECCION + """
-                 WHERE a.institucion_id = :institucion
+                 WHERE a.institucion_id IN (:instituciones)
                    AND (CAST(:estado AS varchar) IS NULL OR a.estado = :estado)
                    AND (a.estado = 'abierta' OR a.generada_en > now() - INTERVAL '30 days')
                  ORDER BY (a.estado = 'abierta') DESC, a.generada_en DESC""")
-                .param("institucion", institucionId)
+                .param("instituciones", List.copyOf(instituciones))
                 .param("estado", estado == null ? null : estado.codigo())
                 .query(this::mapear).list();
     }

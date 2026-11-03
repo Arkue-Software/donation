@@ -2,7 +2,6 @@ package co.gov.redvital.donacion.infraestructura.persistencia;
 
 import co.gov.redvital.donacion.aplicacion.puerto.salida.AuditoriaPort;
 import co.gov.redvital.donacion.dominio.modelo.RegistroAuditoria;
-import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -22,7 +21,7 @@ class AuditoriaJdbc implements AuditoriaPort {
                                                 recurso_tipo, recurso_id, resultado, correlacion_id, origen, ocurrido_en)
                 VALUES (:id, :actorTipo, :actorId, :rol, :jurisdiccion, :operacion, :recursoTipo, :recursoId,
                         :resultado, :correlacion, :origen, :ocurrido)""")
-                .param("id", UUID.randomUUID())
+                .param("id", r.id())
                 .param("actorTipo", r.actorTipo())
                 .param("actorId", recortar(r.actorId(), 64))
                 .param("rol", recortar(r.rol(), 40))

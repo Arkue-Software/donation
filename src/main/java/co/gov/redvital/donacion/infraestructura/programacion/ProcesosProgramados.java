@@ -4,6 +4,7 @@ import co.gov.redvital.donacion.aplicacion.casodeuso.DepurarRegistrosTecnicos;
 import co.gov.redvital.donacion.aplicacion.casodeuso.EvaluarAlertas;
 import co.gov.redvital.donacion.aplicacion.casodeuso.ProcesarVencimientos;
 import co.gov.redvital.donacion.aplicacion.casodeuso.PublicarBandeja;
+import co.gov.redvital.donacion.aplicacion.casodeuso.PublicarIndicadores;
 import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
@@ -28,9 +29,11 @@ class ProcesosProgramados {
     private final ProcesarVencimientos vencimientos;
     private final EvaluarAlertas alertas;
     private final DepurarRegistrosTecnicos depurar;
+    private final PublicarIndicadores indicadores;
 
     ProcesosProgramados(PublicarBandeja publicar, ProcesarVencimientos vencimientos, EvaluarAlertas alertas,
-                        DepurarRegistrosTecnicos depurar, MeterRegistry metricas) {
+                        DepurarRegistrosTecnicos depurar, PublicarIndicadores indicadores, MeterRegistry metricas) {
+        this.indicadores = indicadores;
         this.publicar = publicar;
         this.vencimientos = vencimientos;
         this.alertas = alertas;
@@ -56,6 +59,12 @@ class ProcesosProgramados {
     @Scheduled(cron = "30 */5 * * * *")
     void evaluarAlertas() {
         ejecutarSeguro("evaluación de alertas", alertas::ejecutar);
+    }
+
+    /** Cada minuto: la fotografía de M7 de las instituciones que cambiaron (EV-09). */
+    @Scheduled(fixedDelay = 60_000, initialDelay = 20_000)
+    void publicarIndicadores() {
+        ejecutarSeguro("publicación de indicadores", indicadores::ejecutar);
     }
 
     @Scheduled(cron = "0 17 * * * *")

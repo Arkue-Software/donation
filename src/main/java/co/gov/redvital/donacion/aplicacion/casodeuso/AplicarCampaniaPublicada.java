@@ -62,9 +62,11 @@ public final class AplicarCampaniaPublicada {
                 // Datos de la campaña para la plantilla (DD, Tabla 18): nada del donante.
                 Map<String, String> plantilla = Map.of("nombre", evento.nombre(), "sede", evento.sede(),
                         "inicia_en", evento.iniciaEn().toString(), "termina_en", evento.terminaEn().toString());
-                for (UUID donanteId : donantes.conAvisosEnTerritorio(evento.territorioRuta())) {
+                for (var contacto : donantes.conAvisosEnTerritorio(evento.territorioRuta())) {
+                    UUID donanteId = contacto.donanteId();
                     var aviso = new AvisoSolicitadoV1(UUID.randomUUID(), AvisoSolicitadoV1.AVISO_CAMPANIA_PUBLICADA,
-                            "donante", donanteId, evento.campaniaId(), plantilla, ahora);
+                            "donante", donanteId, contacto.correo(), contacto.nombre(), evento.campaniaId(),
+                            plantilla, ahora);
                     bandeja.encolar(new BandejaSalidaPort.EventoSalida(aviso.avisoId(), AvisoSolicitadoV1.TIPO,
                             AvisoSolicitadoV1.VERSION, Temas.AVISO_SOLICITADO, donanteId.toString(), aviso,
                             "campania_publicada:" + evento.campaniaId() + ":" + donanteId, correlacionId), ahora);

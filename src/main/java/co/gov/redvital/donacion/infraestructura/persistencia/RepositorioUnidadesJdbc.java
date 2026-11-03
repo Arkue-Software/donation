@@ -10,6 +10,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
@@ -95,9 +96,12 @@ class RepositorioUnidadesJdbc implements RepositorioUnidades {
     }
 
     @Override
-    public Pagina<Unidad> listar(UUID institucionId, CodigoEstado estado, String componente, int pagina, int tamano) {
+    public Pagina<Unidad> listar(Set<UUID> instituciones, CodigoEstado estado, String componente, int pagina, int tamano) {
+        if (instituciones.isEmpty()) {
+            return new Pagina<>(List.of(), 0, pagina, tamano);
+        }
         String filtro = """
-                 WHERE u.institucion_custodia_id = :institucion
+                 WHERE u.institucion_custodia_id IN (:instituciones)
                    AND (CAST(:estado AS varchar) IS NULL OR e.codigo = :estado)
                    AND (CAST(:componente AS varchar) IS NULL OR c.codigo = :componente)
                 """;
@@ -107,13 +111,13 @@ class RepositorioUnidadesJdbc implements RepositorioUnidades {
                 JOIN componente c ON c.id = u.componente_id
                 JOIN estado_unidad e ON e.id = u.estado_id
                 """ + filtro)
-                .param("institucion", institucionId)
+                .param("instituciones", List.copyOf(instituciones))
                 .param("estado", codigoEstado)
                 .param("componente", componente)
                 .query(Long.class).single();
         List<Unidad> elementos = jdbc.sql(SELECCION + filtro
                         + " ORDER BY d.fecha_captacion DESC, u.id LIMIT :limite OFFSET :desplazamiento")
-                .param("institucion", institucionId)
+                .param("instituciones", List.copyOf(instituciones))
                 .param("estado", codigoEstado)
                 .param("componente", componente)
                 .param("limite", tamano)

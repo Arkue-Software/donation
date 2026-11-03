@@ -1,7 +1,13 @@
 package co.gov.redvital.donacion.infraestructura.seguridad;
 
 import co.gov.redvital.donacion.infraestructura.configuracion.PropiedadesRedVital;
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.security.interfaces.RSAPublicKey;
 import java.util.List;
+import org.springframework.security.converter.RsaKeyConverters;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -22,8 +28,8 @@ import org.springframework.security.web.SecurityFilterChain;
 
 /**
  * El servicio vuelve a validar el token aunque el gateway ya lo hizo (EC-03):
- * firma RS256 contra el JWKS de Identidad, emisor, audiencia y vigencia. Sin
- * llaves disponibles, falla cerrado con 401.
+ * firma RS256 contra la llave pública de Identidad, emisor, audiencia y
+ * vigencia.
  */
 @Configuration
 @EnableMethodSecurity
@@ -41,12 +47,9 @@ class SeguridadConfig {
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(a -> a
                         .requestMatchers("/actuator/health", "/actuator/health/**", "/actuator/prometheus").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/v1/intenciones", "/v1/donantes").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/v1/intenciones").permitAll()
                         .requestMatchers(HttpMethod.GET, "/v1/intenciones/*").permitAll()
-                        // Contacto de un donante para Notificaciones: token de servicio (el
-                        // controlador responde 404 a cualquier otro sujeto).
-                        .requestMatchers(HttpMethod.GET, "/internal/v1/donantes/*/contacto").authenticated()
-                        // El resto de /internal no tiene controladores: responde 404 sin revelar nada.
+                        // Ningún servicio llama a otro: no hay rutas internas, y /internal responde 404.
                         .requestMatchers("/internal/**", "/error").permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(o -> o
@@ -57,11 +60,19 @@ class SeguridadConfig {
         return http.build();
     }
 
+    /**
+     * Firma RS256 contra la llave pública de Identidad, leída de un archivo. Sin
+     * la llave no arranca: falla cerrado.
+     */
     @Bean
-    JwtDecoder decodificadorJwt(PropiedadesRedVital propiedades) {
+    JwtDecoder decodificadorJwt(PropiedadesRedVital propiedades) throws IOException {
         var jwt = propiedades.jwt();
-        NimbusJwtDecoder decodificador = NimbusJwtDecoder.withJwkSetUri(jwt.jwksUri())
-                .jwsAlgorithm(SignatureAlgorithm.RS256)
+        RSAPublicKey llave;
+        try (InputStream pem = Files.newInputStream(Path.of(jwt.llavePublica()))) {
+            llave = RsaKeyConverters.x509().convert(pem);
+        }
+        NimbusJwtDecoder decodificador = NimbusJwtDecoder.withPublicKey(llave)
+                .signatureAlgorithm(SignatureAlgorithm.RS256)
                 .build();
         var audiencia = new JwtClaimValidator<List<String>>(JwtClaimNames.AUD,
                 aud -> aud != null && aud.contains(jwt.audiencia()));

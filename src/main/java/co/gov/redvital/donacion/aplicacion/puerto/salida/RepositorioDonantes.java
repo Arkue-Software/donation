@@ -21,6 +21,10 @@ public interface RepositorioDonantes {
 
     void registrarDonacion(UUID id, LocalDate fecha, LocalDate elegibleDesde, String grupoSanguineo, Instant ahora);
 
-    /** Donantes activos con el aviso de campañas autorizado en ese territorio. */
-    List<UUID> conAvisosEnTerritorio(String territorioRuta);
+    /** Destinatario de un aviso: el donante, su correo de contacto y su nombre para el saludo. */
+    record Contacto(UUID donanteId, String correo, String nombre) {
+    }
+
+    /** Donantes activos, con correo de contacto y el aviso de campañas autorizado, en ese territorio. */
+    List<Contacto> conAvisosEnTerritorio(String territorioRuta);
 }

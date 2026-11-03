@@ -79,13 +79,8 @@ redvital:
     # Emisor y audiencia que firma hoy identity-service (EmisorTokenAcceso).
     emisor: ${JWT_EMISOR:https://identidad.redvital.local}
     audiencia: ${JWT_AUDIENCIA:redvital}
-    jwks-uri: ${JWT_JWKS_URI:http://identity-service:8080/.well-known/jwks.json}
-  identidad:
-    url: ${IDENTIDAD_URL:http://identity-service:8080}
-    cliente: donacion
-    # Archivo /run/secrets/donacion_secreto_identidad
-    secreto: ${donacion_secreto_identidad:}
-    plazo: 3s
+    # Llave pública de Identidad, como archivo: ningún servicio llama a otro.
+    llave-publica: ${JWT_LLAVE_PUBLICA:/run/secrets/identidad_llave_publica}
   documento:
     # Archivo /run/secrets/donacion_clave_hmac. Estable y respaldada: rotarla deja huérfanos los resúmenes.
     clave-hmac: ${donacion_clave_hmac:}
