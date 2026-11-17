@@ -35,7 +35,7 @@ public final class ActualizarPerfilDonante {
     }
 
     public ConsultasDelDonante.Perfil ejecutar(Actor actor, Comando c, ContextoPeticion ctx) {
-        String nombre = Validaciones.requerido(c.nombre(), "nombre", 120);
+        String nombre = Validaciones.nombrePersona(c.nombre(), "nombre", 120);
         String correo = Validaciones.opcional(c.correo(), "correo", 160);
         if (correo != null && !CORREO.matcher(correo).matches()) {
             throw new DatosInvalidos("El campo correo no es un correo válido.");

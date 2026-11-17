@@ -8,6 +8,7 @@ final class Validaciones {
 
     private static final Pattern RUTA_MUNICIPIO = Pattern.compile("^/00/\\d{2}/\\d{5}$");
     private static final Pattern RUTA_TERRITORIO = Pattern.compile("^/00(/\\d{2}(/\\d{5})?)?$");
+    private static final Pattern NOMBRE_PERSONA = Pattern.compile("^\\p{L}(?:[\\p{L}\\p{M} '\u2019-]|\\.(?= |$))*$");
 
     private Validaciones() {
     }
@@ -31,6 +32,20 @@ final class Validaciones {
         String limpio = valor.trim();
         if (limpio.length() > maximo) {
             throw new DatosInvalidos("El campo " + campo + " supera la longitud permitida.");
+        }
+        return limpio;
+    }
+
+    /**
+     * Nombre de una persona: letras, espacios, apóstrofo, guion y punto de
+     * abreviatura. El nombre sale en el saludo de los correos (EV-02); sin esta
+     * regla podría llevar un enlace o un texto ajeno. Identidad y la web aplican
+     * la misma.
+     */
+    static String nombrePersona(String valor, String campo, int maximo) {
+        String limpio = requerido(valor, campo, maximo);
+        if (!NOMBRE_PERSONA.matcher(limpio).matches()) {
+            throw new DatosInvalidos("El campo " + campo + " solo admite letras, espacios, apóstrofo, guion y punto.");
         }
         return limpio;
     }
