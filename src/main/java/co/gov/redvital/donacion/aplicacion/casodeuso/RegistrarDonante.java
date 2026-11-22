@@ -160,7 +160,7 @@ public final class RegistrarDonante {
         if (c.documento() == null || !DOCUMENTO.matcher(c.documento().trim()).matches()) {
             throw new DatosInvalidos("El campo documento no tiene un formato válido.");
         }
-        Validaciones.requerido(c.nombre(), "nombre", 120);
+        Validaciones.nombrePersona(c.nombre(), "nombre", 120);
         LocalDate hoy = LocalDate.now(reloj.withZone(zona));
         if (c.fechaNacimiento() == null || !c.fechaNacimiento().isBefore(hoy)) {
             throw new DatosInvalidos("El campo fecha_nacimiento debe ser una fecha pasada.");
